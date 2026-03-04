@@ -231,19 +231,25 @@ class BPETrainer:
                 pbar.update(1)
 
         return self.vocab, self.merges
-    
+
     def save_vocab(self, path: str):
         import json
+        import base64
 
-        vocab_json = {str(k): list(v) for k, v in self.vocab.items()}
+        vocab_json = {str(k): base64.b64encode(v).decode("ascii") for k, v in self.vocab.items()}
         with open(path, "w") as f:
             json.dump(vocab_json, f)
 
-
     def save_merges(self, path: str):
+        import json
+        import base64
+
+        merge_json = [
+            tuple([base64.b64encode(v[0]).decode("ascii"), base64.b64encode(v[1]).decode("ascii")]) for v in self.merges
+        ]
+
         with open(path, "w") as f:
-            for merge in self.merges:
-                f.write(f"{merge[0].decode('utf-8', errors='replace')} {merge[1].decode('utf-8', errors='replace')}\n")
+            json.dump(merge_json, f)
 
 
 def train_bpe(
@@ -257,8 +263,6 @@ def train_bpe(
 
     trainer = BPETrainer(special_tokens=special_tokens)
     return trainer.train(input_path, vocab_size, num_workers)
-
-
 
 
 if __name__ == "__main__":
@@ -277,6 +281,6 @@ if __name__ == "__main__":
     print(f"Number of merges: {len(merges)}")
 
     trainer.save_vocab(f"{output_dir}/vocab.json")
-    trainer.save_merges(f"{output_dir}/merges.txt")
+    trainer.save_merges(f"{output_dir}/merges.json")
     print(f"Saved vocab to {output_dir}/vocab.json")
-    print(f"Saved merges to {output_dir}/merges.txt")
+    print(f"Saved merges to {output_dir}/merges.json")

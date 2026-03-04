@@ -1,6 +1,7 @@
 import argparse
 import os
 import yaml
+import time
 from cs336_basics.bpe_optimized import BPETrainer
 
 
@@ -18,9 +19,9 @@ def main(input_path, vocab_size, num_workers, special_tokens, output_dir):
 
     # 保存结果
     trainer.save_vocab(f"{output_dir}/vocab.json")
-    trainer.save_merges(f"{output_dir}/merges.txt")
+    trainer.save_merges(f"{output_dir}/merges.json")
     print(f"Saved vocab to {output_dir}/vocab.json")
-    print(f"Saved merges to {output_dir}/merges.txt")
+    print(f"Saved merges to {output_dir}/merges.json")
 
 
 if __name__ == "__main__":
@@ -41,6 +42,7 @@ if __name__ == "__main__":
     else:
         config = {}
 
+    start = time.time()
     main(
         input_path=args.input_path or config.get("input_path"),
         vocab_size=args.vocab_size or config.get("vocab_size", 500),
@@ -48,3 +50,5 @@ if __name__ == "__main__":
         special_tokens=args.special_tokens or config.get("special_tokens", ["<|endoftext|>"]),
         output_dir=args.output_dir or config.get("output_dir"),
     )
+    end = time.time()
+    print(f"cost time {end - start}")
