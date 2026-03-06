@@ -2,20 +2,23 @@ import torch
 import math
 import torch.nn as nn
 import time
+import colorama
 from torch import Tensor
 from torch.nn.parameter import Parameter, UninitializedParameter
 from torch.nn import functional as F, init
-import colorama
+
 
 # func -----------------------------------------------------------------------------------------------------------------------------
 def silu(x: torch.Tensor) -> torch.Tensor:
     return torch.sigmoid(x) * x
 
+
 def softmax(x: torch.Tensor) -> torch.Tensor:
     x = x - x.max(dim=-1, keepdim=True).values
     exp_x = torch.exp(x)
     inv = exp_x.sum(dim=-1, keepdim=True)
-    return exp_x / inv 
+    return exp_x / inv
+
 
 def scaled_dot_product_attention(q, k, v, mask=None):
     d_model = q.shape[-1]
@@ -88,8 +91,6 @@ class RMSNorm(nn.Module):
         return x / self._rms(x).unsqueeze(-1) * self.weight
 
 
-
-
 class SwiGLU(nn.Module):
     def __init__(self, d_model: int, d_ff: int, device=None, dtype=None):
         super().__init__()
@@ -111,14 +112,15 @@ class SwiGLU(nn.Module):
         element_mul = silu_out * w3_out
         return self.w2(element_mul)
 
+
 class RoPE(nn.Module):
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
         super().__init__()
         device = device if device is not None else torch.device("cpu")
-        self.factory_kwargs = {"device" : device}
+        self.factory_kwargs = {"device": device}
         self.theta = theta
         self.d_k = d_k
-        inv_freq = theta ** (-2 * torch.arange(0, d_k//2, device=device) / d_k)
+        inv_freq = theta ** (-2 * torch.arange(0, d_k // 2, device=device) / d_k)
         pos = torch.arange(0, max_seq_len, device=device).unsqueeze(1)
         freqs = pos * inv_freq
         sin = torch.sin(freqs)
@@ -146,40 +148,36 @@ class RoPE(nn.Module):
 
         return out
 
+
 class MultiHeadSelfAttention(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, rope: RoPE = None, device = None, dtype = None):
+    def __init__(self, d_model: int, num_heads: int, rope: RoPE = None, device=None, dtype=None):
         super().__init__()
         if d_model % num_heads != 0:
             raise Exception("维度不匹配")
 
-        self.factory_kwargs = {"device" : device, "dtype" : dtype}
-        self.WQ = Linear(d_model, d_model, **self.factory_kwargs)
-        self.WK = Linear(d_model, d_model, **self.factory_kwargs)
-        self.WV = Linear(d_model, d_model, **self.factory_kwargs)
-        self.WO = Linear(d_model, d_model, **self.factory_kwargs)
+        self.factory_kwargs = {"device": device, "dtype": dtype}
+        self.q_proj = Linear(d_model, d_model, **self.factory_kwargs)
+        self.k_proj = Linear(d_model, d_model, **self.factory_kwargs)
+        self.v_proj = Linear(d_model, d_model, **self.factory_kwargs)
+        self.output_proj = Linear(d_model, d_model, **self.factory_kwargs)
         self.rope = rope
         self.d_model = d_model
         self.num_heads = num_heads
         self.hdim = d_model // num_heads
-        self.register_buffer(
-            "causal_mask",
-            torch.tril(torch.ones(4096, 4096, dtype=torch.bool)),
-            persistent=False
-        )
+        self.register_buffer("causal_mask", torch.tril(torch.ones(4096, 4096, dtype=torch.bool)), persistent=False)
 
-    
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor):
         """
-            x (bs, seq_len, d_model)
-            (bs, seq_len, num_heads, hdim)
-            transpose -> (bs, num_heads, seq_len, hdim)
+        x (bs, seq_len, d_model)
+        (bs, seq_len, num_heads, hdim)
+        transpose -> (bs, num_heads, seq_len, hdim)
 
         """
         bs, seq_len, d_model = x.shape
 
-        q: torch.Tensor = self.WQ(x)
-        k: torch.Tensor= self.WK(x)
-        v: torch.Tensor = self.WV(x)
+        q: torch.Tensor = self.q_proj(x)
+        k: torch.Tensor = self.k_proj(x)
+        v: torch.Tensor = self.v_proj(x)
         q = q.view(bs, seq_len, self.num_heads, self.hdim).transpose(1, 2)
         k = k.view(bs, seq_len, self.num_heads, self.hdim).transpose(1, 2)
         v = v.view(bs, seq_len, self.num_heads, self.hdim).transpose(1, 2)
@@ -188,43 +186,108 @@ class MultiHeadSelfAttention(nn.Module):
             q = self.rope(q, token_positions)
             k = self.rope(k, token_positions)
 
-        mask = self.causal_mask[:seq_len, :seq_len]           
+        mask = self.causal_mask[:seq_len, :seq_len]
         attn = scaled_dot_product_attention(q, k, v, mask)
         attn = attn.transpose(1, 2).contiguous().view(bs, seq_len, d_model)
-        out = self.WO(attn)
+        out = self.output_proj(attn)
 
         return out
 
 
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len, rope=None, device=None, dtype=None):
+        """
+        x -> rmsnorm -> mha -> rmsnorm -> swiglu
+        """
+        super().__init__()
+        self.factory_kwargs = {"device": device, "dtype": dtype}
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.max_seq_len = max_seq_len
+        self.rope = rope
+        self.attn = MultiHeadSelfAttention(d_model, num_heads, rope=self.rope, **self.factory_kwargs)
+        self.ffn = SwiGLU(d_model, d_ff, **self.factory_kwargs)
+        self.ln1 = RMSNorm(d_model, **self.factory_kwargs)
+        self.ln2 = RMSNorm(d_model, **self.factory_kwargs)
+
+    def forward(self, x: Tensor, token_positions: Tensor = None):
+        if token_positions is None:
+            token_positions = torch.arange(x.shape[1], device=x.device, dtype=torch.long)
+        x_norm = self.ln1(x)
+        mha_out = self.attn(x_norm, token_positions) + x
+        mha_out_norm = self.ln2(mha_out)
+        ffn_out = self.ffn(mha_out_norm) + mha_out
+        return ffn_out
+
+
+class TransformerLM(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        num_layers: int,
+        d_ff: int,
+        max_seq_len,
+        theta,
+        vocab_size,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.factory_kwargs = {"device": device, "dtype": dtype}
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.max_seq_len = max_seq_len
+        self.theta = theta
+        self.vocab_size = vocab_size
+        self.rope = RoPE(theta, d_model // num_heads, max_seq_len, device)
+        self.token_embeddings = Embedding(vocab_size, d_model)
+        self.layers = nn.ModuleList(
+            [
+                TransformerBlock(d_model, num_heads, d_ff, max_seq_len, self.rope, **self.factory_kwargs)
+                for i in range(num_layers)
+            ]
+        )
+        self.ln_final = RMSNorm(d_model, **self.factory_kwargs)
+        self.lm_head = Linear(d_model, vocab_size, **self.factory_kwargs)
+
+    def forward(self, x: torch.Tensor):
+        x = self.token_embeddings(x)
+        for layer in self.layers:
+            x = layer(x)
+        x_norm = self.ln_final(x)
+        out = self.lm_head(x_norm)
+        # out = softmax(out)
+        return out
 
 
 # R@X
-    # def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
-    #     """
-    #     R@X.T.T
-    #     X.T@R.T
-    #     (seq_len, d_model, de_model)
-    #     (bs, seq_len, d_model, 1)
-    #     """
-    #     cos_val = self.cos[token_positions]
-    #     sin_val = self.sin[token_positions]
-    #     bs, seq_len = x.shape[:2]
+# def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+#     """
+#     R@X.T.T
+#     X.T@R.T
+#     (seq_len, d_model, de_model)
+#     (bs, seq_len, d_model, 1)
+#     """
+#     cos_val = self.cos[token_positions]
+#     sin_val = self.sin[token_positions]
+#     bs, seq_len = x.shape[:2]
 
-    #     R = torch.zeros(bs, seq_len, self.d_k, self.d_k, device=x.device, dtype=x.dtype)
-    #     idx = torch.arange(self.d_k // 2, device=R.device) * 2
-    #     R[:, :, idx, idx] = cos_val
-    #     R[:, :, idx + 1, idx + 1] = cos_val
-    #     R[:, :, idx, idx + 1] = -sin_val
-    #     R[:, :, idx + 1, idx] = sin_val
-    #     RT = R.transpose(-2, -1)
-    #     x = x.unsqueeze(dim=-2)
-    #     return (x @ RT).transpose(-2, -1).squeeze(-1)
+#     R = torch.zeros(bs, seq_len, self.d_k, self.d_k, device=x.device, dtype=x.dtype)
+#     idx = torch.arange(self.d_k // 2, device=R.device) * 2
+#     R[:, :, idx, idx] = cos_val
+#     R[:, :, idx + 1, idx + 1] = cos_val
+#     R[:, :, idx, idx + 1] = -sin_val
+#     R[:, :, idx + 1, idx] = sin_val
+#     RT = R.transpose(-2, -1)
+#     x = x.unsqueeze(dim=-2)
+#     return (x @ RT).transpose(-2, -1).squeeze(-1)
 
-        
-
-        
 
 # test part --------------------------------------------------------------------------------------------------------------------------
+
 
 def test_log(test_name):
     def decorator(f):
@@ -241,6 +304,7 @@ def test_log(test_name):
         return wrapper
 
     return decorator
+
 
 @test_log("Linear")
 def test_linear():
@@ -265,6 +329,7 @@ def test_embedding():
     embed = embedding_layer(inputs)
     print(f"after embedding shape is : {embed.shape}")
 
+
 @test_log("RMSNorm")
 def test_rmsnorm():
     d_model = 4
@@ -272,6 +337,7 @@ def test_rmsnorm():
     inputs = torch.randn((10, 20, 4))
     outputs = rmsnrom_layzer(inputs)
     print(f"after norm shape is : {outputs.shape}")
+
 
 @test_log("SwiGLU")
 def test_swiglu():
@@ -281,6 +347,7 @@ def test_swiglu():
     inputs = torch.randn((10, 20, 3))
     outputs = swiglu_layzer(inputs)
     print(f"after swiglu shape is : {outputs.shape}")
+
 
 @test_log("RoPE")
 def test_RoPE():
@@ -294,11 +361,13 @@ def test_RoPE():
     print(f"after rope shape is {outputs.shape}")
     assert inputs.shape == outputs.shape
 
+
 @test_log("softmax")
 def test_softmax():
     inputs = torch.ones((1, 2, 10), dtype=torch.float32)
     norm_output = softmax(inputs)
     print(norm_output)
+
 
 @test_log("scaled_dot_product_attention")
 def test_scaled_dot_product_attention():
@@ -312,9 +381,10 @@ def test_scaled_dot_product_attention():
     print(f"before inf value", inf_val)
     inf_val[mask] = 0
     print(f"after inf value", inf_val)
-    
+
     norm_output = scaled_dot_product_attention(q, k, v, mask)
     print(norm_output.shape)
+
 
 @test_log("multi_head_attention")
 def test_mha():
@@ -325,10 +395,56 @@ def test_mha():
     mha_layer = MultiHeadSelfAttention(d_model, num_heads)
 
     inputs = torch.ones(64, 100, 512)
+    token_positions = torch.arange(100)
 
-    mha_layer(inputs)
+    mha_layer(inputs, token_positions)
     mask = torch.tril(torch.ones(seq_len, seq_len), diagonal=0).bool()
     print(mask)
+
+
+@test_log("TransformerBlock")
+def test_transformer_block():
+    d_model = 512
+    num_heads = 8
+    d_ff = 2048
+    max_seq_len = 100
+    theta = 10000
+
+    rope = RoPE(theta, d_model // num_heads, max_seq_len)
+    block = TransformerBlock(d_model, num_heads, d_ff, max_seq_len, rope)
+
+    bs, seq_len = 2, 10
+    inputs = torch.randn(bs, seq_len, d_model)
+    outputs = block(inputs)
+
+    assert outputs.shape == inputs.shape, f"Expected {inputs.shape}, got {outputs.shape}"
+    print(f"input shape: {inputs.shape}, output shape: {outputs.shape}")
+
+    for name, param in block.named_parameters():
+        print(name)
+
+
+@test_log("Transformer")
+def test_transformer():
+    d_model = 512
+    num_heads = 8
+    d_ff = 2048
+    max_seq_len = 100
+    theta = 10000
+    num_layers = 6
+    vocab_size = 10000
+
+    transformer = TransformerLM(d_model, num_heads, num_layers, d_ff, max_seq_len, theta, vocab_size)
+
+    bs, seq_len = 2, 10
+    inputs = torch.randint(0, vocab_size, (bs, seq_len))
+    outputs = transformer(inputs)
+
+    assert outputs.shape == (bs, seq_len, vocab_size), f"Expected {(bs, seq_len, vocab_size)}, got {outputs.shape}"
+    print(f"input shape: {inputs.shape}, output shape: {outputs.shape}")
+
+    for name, param in transformer.named_parameters():
+        print(name)
 
 
 if __name__ == "__main__":
@@ -341,3 +457,5 @@ if __name__ == "__main__":
     test_softmax()
     test_scaled_dot_product_attention()
     test_mha()
+    test_transformer_block()
+    test_transformer()
