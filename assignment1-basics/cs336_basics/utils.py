@@ -28,6 +28,7 @@ def cross_entropy(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 
 
 
+
 @test_log("cross_entropy")
 def test_cross_entropy():
     vocab_size = 100
