@@ -1,11 +1,10 @@
 import torch
 import math
 import torch.nn as nn
-import time
-import colorama
 from torch import Tensor
 from torch.nn.parameter import Parameter, UninitializedParameter
 from torch.nn import functional as F, init
+from tools.test_frame import test_log
 
 
 # func -----------------------------------------------------------------------------------------------------------------------------
@@ -289,21 +288,6 @@ class TransformerLM(nn.Module):
 # test part --------------------------------------------------------------------------------------------------------------------------
 
 
-def test_log(test_name):
-    def decorator(f):
-        def wrapper(*args, **kwargs):
-            start_time = time.time()
-            print(f"{colorama.Fore.BLUE}------------------------------Test {test_name}------------------------------")
-            result = f(*args, **kwargs)
-            end_time = time.time()
-            print(
-                f"{colorama.Fore.GREEN} {test_name} passed, cost {end_time - start_time} s {colorama.Style.RESET_ALL}"
-            )
-            return result
-
-        return wrapper
-
-    return decorator
 
 
 @test_log("Linear")
@@ -448,7 +432,6 @@ def test_transformer():
 
 
 if __name__ == "__main__":
-    colorama.init(autoreset=True)
     test_linear()
     test_embedding()
     test_rmsnorm()
