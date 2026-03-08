@@ -89,6 +89,32 @@ class AdamW(torch.optim.Optimizer):
         return loss
 
 
+class CosineAnnealingSchedue:
+    def __init__(self, optimizer: torch.optim.Optimizer, 
+                    max_learning_rate: float, 
+                    min_learning_rate: float,
+                    warmup_iters: int,
+                    cosine_cycle_iters: int):
+        self.optimizer = optimizer
+        self.max_learning_rate = max_learning_rate
+        self.min_learning_rate = min_learning_rate
+        self.warmup_iters = warmup_iters
+        self.cosine_cycle_iters = cosine_cycle_iters
+
+    def step(self):
+        pass
+
+    def get_iter_lr(self, it):
+        if it < self.warmup_iters:
+            return it / self.warmup_iters * self.max_learning_rate
+        elif it > self.cosine_cycle_iters:
+            return self.min_learning_rate
+        else:
+            return self.min_learning_rate + (1 + math.cos((it - self.warmup_iters) / (self.cosine_cycle_iters - self.warmup_iters) * math.pi)) * (self.max_learning_rate - self.min_learning_rate) / 2
+    
+        
+
+
 @test_log("SGD")
 def test_SGD():
     in_shape = 3

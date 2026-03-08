@@ -12,7 +12,7 @@ import torch.nn as nn
 
 from cs336_basics.module import (Linear, Embedding, RMSNorm, silu, SwiGLU, RoPE, softmax, scaled_dot_product_attention, MultiHeadSelfAttention, TransformerBlock, TransformerLM)
 from cs336_basics.utils import (cross_entropy)
-from cs336_basics.optimizer import (AdamW)
+from cs336_basics.optimizer import (AdamW, CosineAnnealingSchedue)
 from cs336_basics.bpe_optimized import train_bpe
 from cs336_basics.tokenizer import Tokenizer
 
@@ -548,7 +548,8 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    cosine_anneal_schedule = CosineAnnealingSchedue(None, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
+    return cosine_anneal_schedule.get_iter_lr(it)
 
 
 def run_save_checkpoint(
