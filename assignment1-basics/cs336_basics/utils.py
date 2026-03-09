@@ -4,7 +4,7 @@ import colorama
 from typing import IO, Any, BinaryIO
 import numpy.typing as npt
 import numpy as np
-from tools.test_frame import test_log
+from tools.test_frame import log_test
 
 
 def softmax(x: torch.Tensor) -> torch.Tensor:
@@ -61,7 +61,7 @@ def load_checkpoint(src: str | os.PathLike | BinaryIO | IO[bytes], model: torch.
     
 
 
-@test_log("cross_entropy")
+@log_test("cross_entropy")
 def test_cross_entropy():
     vocab_size = 100
     inputs = torch.randn(64, vocab_size)
@@ -71,7 +71,7 @@ def test_cross_entropy():
     print(f"cross_entropy loss {ce_loss.shape}")
 
 
-@test_log("get_batch")
+@log_test("get_batch")
 def test_get_batch():
     dataset = np.arange(100)
     batch_size = 4

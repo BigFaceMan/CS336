@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable
 from torch import Tensor
 from torch.nn.parameter import Parameter, UninitializedParameter
 from torch.nn import functional as F, init
-from tools.test_frame import test_log
+from tools.test_frame import log_test
 from cs336_basics.module import Linear
 
 
@@ -139,7 +139,7 @@ def grad_clip(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps:
         
 
 
-@test_log("SGD")
+@log_test("SGD")
 def test_SGD():
     in_shape = 3
     out_shape = 4
@@ -187,7 +187,7 @@ def test_SGD():
         opt.step()
 
 
-@test_log("test_adamw_basic_update")
+@log_test("test_adamw_basic_update")
 def test_adamw_basic_update():
     """测试 AdamW 基本更新功能"""
     torch.manual_seed(42)
@@ -206,7 +206,7 @@ def test_adamw_basic_update():
     print("test_adamw_basic_update: PASSED")
 
 
-@test_log("test_adamw_with_weight_decay")
+@log_test("test_adamw_with_weight_decay")
 def test_adamw_with_weight_decay():
     """测试 weight decay 功能"""
     torch.manual_seed(42)
@@ -240,7 +240,7 @@ def test_adamw_with_weight_decay():
     )
     print("test_adamw_with_weight_decay: PASSED")
 
-@test_log("grad_clip")
+@log_test("grad_clip")
 def test_grad_clip():
     parameters = [nn.Parameter(torch.randn((100, 3))) * 100 for i in range(100)]
     parameters = grad_clip(parameters, 1000)

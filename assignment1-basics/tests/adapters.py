@@ -164,10 +164,10 @@ def run_multihead_self_attention(
     """
     mha_layer = MultiHeadSelfAttention(d_model=d_model, num_heads=num_heads, rope=None, device=in_features.device, dtype=in_features.dtype)
 
-    mha_layer.WQ.weight.data = q_proj_weight
-    mha_layer.WK.weight.data = k_proj_weight
-    mha_layer.WV.weight.data = v_proj_weight
-    mha_layer.WO.weight.data = o_proj_weight
+    mha_layer.q_proj.weight.data = q_proj_weight
+    mha_layer.k_proj.weight.data = k_proj_weight
+    mha_layer.v_proj.weight.data = v_proj_weight
+    mha_layer.output_proj.weight.data = o_proj_weight
     return mha_layer(in_features, None)
 
 
@@ -211,10 +211,10 @@ def run_multihead_self_attention_with_rope(
 
     rope = RoPE(theta=theta, d_k=d_model//num_heads, max_seq_len=max_seq_len, device=in_features.device)
     mha_layer = MultiHeadSelfAttention(d_model=d_model, num_heads=num_heads, rope=rope, device=in_features.device)
-    mha_layer.WQ.weight.data = q_proj_weight
-    mha_layer.WK.weight.data = k_proj_weight
-    mha_layer.WV.weight.data = v_proj_weight
-    mha_layer.WO.weight.data = o_proj_weight
+    mha_layer.q_proj.weight.data = q_proj_weight
+    mha_layer.k_proj.weight.data = k_proj_weight
+    mha_layer.v_proj.weight.data = v_proj_weight
+    mha_layer.output_proj.weight.data = o_proj_weight
     return mha_layer(in_features, token_positions)
 
 

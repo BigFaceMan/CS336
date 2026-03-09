@@ -1,7 +1,7 @@
 import time
 import colorama
 
-def test_log(test_name):
+def log_test(test_name):
     def decorator(f):
         def wrapper(*args, **kwargs):
             start_time = time.time()

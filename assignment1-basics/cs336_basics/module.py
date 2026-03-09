@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn.parameter import Parameter, UninitializedParameter
 from torch.nn import functional as F, init
-from tools.test_frame import test_log
+from tools.test_frame import log_test
 
 
 # func -----------------------------------------------------------------------------------------------------------------------------
@@ -113,10 +113,10 @@ class SwiGLU(nn.Module):
 
 
 class RoPE(nn.Module):
-    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None, dtype=None):
         super().__init__()
         device = device if device is not None else torch.device("cpu")
-        self.factory_kwargs = {"device": device}
+        self.factory_kwargs = {"device": device, "dtype": dtype}
         self.theta = theta
         self.d_k = d_k
         inv_freq = theta ** (-2 * torch.arange(0, d_k // 2, device=device) / d_k)
@@ -290,7 +290,7 @@ class TransformerLM(nn.Module):
 
 
 
-@test_log("Linear")
+@log_test("Linear")
 def test_linear():
     in_features = 3
     out_features = 4
@@ -302,7 +302,7 @@ def test_linear():
     print(out.shape)
 
 
-@test_log("Embedding")
+@log_test("Embedding")
 def test_embedding():
     num_embeddings = 100
     embedding_dim = 300
@@ -314,7 +314,7 @@ def test_embedding():
     print(f"after embedding shape is : {embed.shape}")
 
 
-@test_log("RMSNorm")
+@log_test("RMSNorm")
 def test_rmsnorm():
     d_model = 4
     rmsnrom_layzer = RMSNorm(d_model)
@@ -323,7 +323,7 @@ def test_rmsnorm():
     print(f"after norm shape is : {outputs.shape}")
 
 
-@test_log("SwiGLU")
+@log_test("SwiGLU")
 def test_swiglu():
     d_model = 3
     d_ff = 10
@@ -333,7 +333,7 @@ def test_swiglu():
     print(f"after swiglu shape is : {outputs.shape}")
 
 
-@test_log("RoPE")
+@log_test("RoPE")
 def test_RoPE():
     theat = 10000
     d_k = 512
@@ -346,14 +346,14 @@ def test_RoPE():
     assert inputs.shape == outputs.shape
 
 
-@test_log("softmax")
+@log_test("softmax")
 def test_softmax():
     inputs = torch.ones((1, 2, 10), dtype=torch.float32)
     norm_output = softmax(inputs)
     print(norm_output)
 
 
-@test_log("scaled_dot_product_attention")
+@log_test("scaled_dot_product_attention")
 def test_scaled_dot_product_attention():
     q = torch.ones((1, 2, 10), dtype=torch.float32)
     k = torch.ones((1, 2, 10), dtype=torch.float32)
@@ -370,7 +370,7 @@ def test_scaled_dot_product_attention():
     print(norm_output.shape)
 
 
-@test_log("multi_head_attention")
+@log_test("multi_head_attention")
 def test_mha():
     d_model = 512
     num_heads = 8
@@ -386,7 +386,7 @@ def test_mha():
     print(mask)
 
 
-@test_log("TransformerBlock")
+@log_test("TransformerBlock")
 def test_transformer_block():
     d_model = 512
     num_heads = 8
@@ -408,7 +408,7 @@ def test_transformer_block():
         print(name)
 
 
-@test_log("Transformer")
+@log_test("Transformer")
 def test_transformer():
     d_model = 512
     num_heads = 8
