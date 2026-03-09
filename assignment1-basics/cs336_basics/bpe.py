@@ -8,11 +8,6 @@ from tqdm import tqdm
 from multiprocessing import Process, Queue
 from collections import Counter
 
-def log(name, val):
-    return 
-    # print(f"{name} is {val}, len is {len(val)}")
-
-
 
 def find_chunk_boundaries(
     file: BinaryIO,
@@ -87,7 +82,6 @@ def get_pre_token(input_path, special_tokens):
         docs = [content]
     else:
         pattern = "|".join(map(re.escape, special_tokens))
-        log("pattern", pattern)
         docs = [d for d in re.split(pattern, content) if d]
     pre_toekn_cache = pre_tokenization(docs)
 
@@ -114,7 +108,6 @@ def get_doc(input_path, special_tokens, num_works):
                 docs = [chunk]
             else:
                 pattern = "|".join(map(re.escape, special_tokens))
-                log("pattern", pattern)
                 docs = [d for d in re.split(pattern, chunk) if d]
 
             p = Process(target=worker, args=(docs, q))

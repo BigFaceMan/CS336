@@ -23,6 +23,7 @@ dependencies = [
     "tokenizers>=0.22.2",
     "transformers>=5.3.0",
     "colorama>=0.4.6",
+    "swanlab>=0.7.11",
 ]
 
 [build-system]

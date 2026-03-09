@@ -38,7 +38,7 @@ class Tokenizer:
 
 
     @classmethod
-    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens=None):
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] = list("<|endoftext|>")):
         """
         vocab_json
             type is dict
@@ -64,23 +64,6 @@ class Tokenizer:
 
         return Tokenizer(vocab, merges, special_tokens)
 
-    # def _bpe_encode(self, txi: str):
-    #     # 如果用这样就是假设 vocab (0, 255) 是正常初始化的
-    #     txi_ids = list(txi.encode("utf-8"))
-    #     for a, b in self.merges:
-    #         i = 0
-    #         new_txi_ids = []
-    #         while i < len(txi_ids):
-    #             if i + 1 < len(txi_ids) and self.vocab[txi_ids[i]] == a and self.vocab[txi_ids[i + 1]] == b:
-    #                 new_bytes = self.vocab[txi_ids[i]] + self.vocab[txi_ids[i + 1]]
-    #                 new_id = self.bytes_2_id[new_bytes]
-    #                 new_txi_ids.append(new_id)
-    #                 i += 2
-    #             else:
-    #                 new_txi_ids.append(txi_ids[i])
-    #                 i += 1
-    #         txi_ids = new_txi_ids
-    #     return txi_ids
 
     def _bpe_encode(self, txi: str) -> list[int]:
         """
@@ -95,7 +78,6 @@ class Tokenizer:
         while len(tokens_id) > 1:
             rank_mn = float('inf')
             merge_pair = None 
-            merge_index = -1
             i = 0
             while i < len(tokens_id):
                 if i + 1 < len(tokens_id):
@@ -105,7 +87,6 @@ class Tokenizer:
                         if rank < rank_mn:
                             rank_mn = rank
                             merge_pair = pairi
-                            merge_index = i
                 i += 1
             if merge_pair is None:
                 break
@@ -170,7 +151,7 @@ if __name__ == "__main__":
     print("------------------------------------TEST1------------------------------------")
     vocab_filepath = "/home/spsong/Code/cs336/assignment1-basics/output/tokenizer_small_story/vocab.json"
     merges_filepath = "/home/spsong/Code/cs336/assignment1-basics/output/tokenizer_small_story/merges.json"
-    special_tokens = ["<|endoftext|>", "aaaaa"]
+    special_tokens = ["<|endoftext|>"]
     tokenizer = Tokenizer.from_files(vocab_filepath, merges_filepath, special_tokens)
     str = "a<|endoftext|>"
     encode_ids = tokenizer.encode(str)
