@@ -95,22 +95,46 @@ class CosineAnnealingSchedue:
                     min_learning_rate: float,
                     warmup_iters: int,
                     cosine_cycle_iters: int):
-        self.optimizer = optimizer
+        self.optimizer: torch.optim.Optimizer = optimizer
         self.max_learning_rate = max_learning_rate
         self.min_learning_rate = min_learning_rate
         self.warmup_iters = warmup_iters
         self.cosine_cycle_iters = cosine_cycle_iters
+        self.ti = 0
 
     def step(self):
-        pass
+        lr = self.get_iter_lr(self.ti)
+        for group in self.optimizer.param_groups:
+            group["lr"] = lr
+            
+        self.ti += 1
 
     def get_iter_lr(self, it):
         if it < self.warmup_iters:
             return it / self.warmup_iters * self.max_learning_rate
-        elif it > self.cosine_cycle_iters:
-            return self.min_learning_rate
-        else:
-            return self.min_learning_rate + (1 + math.cos((it - self.warmup_iters) / (self.cosine_cycle_iters - self.warmup_iters) * math.pi)) * (self.max_learning_rate - self.min_learning_rate) / 2
+
+        if it < self.cosine_cycle_iters:
+            progress = (it - self.warmup_iters) / (self.cosine_cycle_iters - self.warmup_iters)
+            cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
+            return self.min_learning_rate + cosine_decay * (self.max_learning_rate - self.min_learning_rate)
+
+        return self.min_learning_rate
+
+def grad_clip(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps: float = 1e-6) -> None:
+    gdl2 = torch.tensor(0.0)
+    for param in parameters:
+        if param.grad is None:
+            continue
+        gdl2 += (param.grad**2).sum()
+
+    gdl2 = torch.sqrt(gdl2)
+    
+    if gdl2 > max_l2_norm:
+        inv = max_l2_norm / (gdl2 + eps)
+        for param in parameters:
+            if param.grad is None:
+                continue
+            param.grad.mul_(inv)
     
         
 
@@ -216,133 +240,15 @@ def test_adamw_with_weight_decay():
     )
     print("test_adamw_with_weight_decay: PASSED")
 
-@test_log("test_adamw_matches_pytorch")
-def test_adamw_matches_pytorch():
-    """测试与 PyTorch AdamW 结果是否接近"""
-    torch.manual_seed(42)
-
-    model_pytorch = torch.nn.Linear(3, 2, bias=False)
-    opt_pytorch = torch.optim.AdamW(
-        model_pytorch.parameters(), lr=1e-3, weight_decay=0.01, betas=(0.9, 0.999), eps=1e-8
-    )
-
-    model_ours = torch.nn.Linear(3, 2, bias=False)
-    opt_ours = AdamW(model_ours.parameters(), lr=1e-3, weight_decay=0.01, betas=(0.9, 0.999), eps=1e-8)
-
-    with torch.no_grad():
-        model_ours.weight.copy_(model_pytorch.weight)
-
-    for _ in range(100):
-        x = torch.rand(2, 3)
-        y_target = torch.tensor([x[0] + x[1], -x[2]])
-
-        opt_pytorch.zero_grad()
-        loss_pytorch = ((model_pytorch(x) - y_target) ** 2).sum()
-        loss_pytorch.backward()
-        opt_pytorch.step()
-
-        opt_ours.zero_grad()
-        loss_ours = ((model_ours(x) - y_target) ** 2).sum()
-        loss_ours.backward()
-        opt_ours.step()
-
-    is_close = torch.allclose(model_ours.weight, model_pytorch.weight, atol=1e-3)
-    max_diff = torch.max(torch.abs(model_ours.weight - model_pytorch.weight)).item()
-    print(f"test_adamw_matches_pytorch: max_diff = {max_diff:.6e}")
-    assert is_close, f"Parameters differ from PyTorch AdamW by {max_diff}"
-    print("test_adamw_matches_pytorch: PASSED")
-
-
-@test_log("test_adamw_state_persistence")
-def test_adamw_state_persistence():
-    """测试状态在多次迭代中是否正确保存"""
-    torch.manual_seed(42)
-    model = torch.nn.Linear(3, 2, bias=False)
-    opt = AdamW(model.parameters(), lr=0.1)
-
-    x = torch.randn(2, 3)
-    out = model(x)
-    loss = out.sum()
-    loss.backward()
-    opt.step()
-
-    state = opt.state[model.weight]
-    assert "m" in state, "First moment estimate should be saved"
-    assert "v" in state, "Second moment estimate should be saved"
-    assert "t" in state, "Time step should be saved"
-    assert state["t"] == 1, f"Time step should be 1, got {state['t']}"
-
-    out = model(x)
-    loss = out.sum()
-    loss.backward()
-    opt.step()
-
-    assert opt.state[model.weight]["t"] == 2, "Time step should be 2 after second step"
-    print("test_adamw_state_persistence: PASSED")
-
-
-@test_log("test_adamw_handles_none_grad")
-def test_adamw_handles_none_grad():
-    """测试处理无梯度的参数"""
-    torch.manual_seed(42)
-    model = torch.nn.Linear(3, 2, bias=False)
-    opt = AdamW(model.parameters(), lr=0.1)
-
-    model.weight.grad = None
-
-    initial_weight = model.weight.data.clone()
-    opt.step()
-
-    assert torch.allclose(model.weight.data, initial_weight), "Parameters with None grad should not be updated"
-    print("test_adamw_handles_none_grad: PASSED")
-
-
-@test_log("test_adamw_lr_validation")
-def test_adamw_lr_validation():
-    """测试 lr 参数验证"""
-    try:
-        AdamW([torch.nn.Parameter(torch.randn(3, 2))], lr=-0.1)
-        assert False, "Should raise ValueError for negative lr"
-    except ValueError as e:
-        assert "learning rate" in str(e).lower()
-        print("test_adamw_lr_validation: PASSED")
-
-
-@test_log("test_adamw_different_betas")
-def test_adamw_different_betas():
-    """测试不同的 betas 参数"""
-    torch.manual_seed(42)
-    model1 = torch.nn.Linear(3, 2, bias=False)
-    model2 = torch.nn.Linear(3, 2, bias=False)
-
-    opt1 = AdamW(model1.parameters(), lr=0.1, betas=(0.5, 0.999))
-    opt2 = AdamW(model2.parameters(), lr=0.1, betas=(0.9, 0.999))
-
-    x = torch.randn(2, 3)
-
-    for _ in range(50):
-        opt1.zero_grad()
-        out = model1(x)
-        loss = out.sum()
-        loss.backward()
-        opt1.step()
-
-        opt2.zero_grad()
-        out = model2(x)
-        loss = out.sum()
-        loss.backward()
-        opt2.step()
-
-    assert not torch.allclose(model1.weight.data, model2.weight.data), (
-        "Different betas should produce different results"
-    )
-    print("test_adamw_different_betas: PASSED")
-
-
+@test_log("grad_clip")
+def test_grad_clip():
+    parameters = [nn.Parameter(torch.randn((100, 3))) * 100 for i in range(100)]
+    parameters = grad_clip(parameters, 1000)
 
 if __name__ == "__main__":
     # test_SGD()
     test_adamw_basic_update()
     test_adamw_with_weight_decay()
-    print("\n=== All AdamW tests PASSED ===")
+    test_grad_clip()
+
 

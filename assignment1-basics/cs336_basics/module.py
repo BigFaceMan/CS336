@@ -420,6 +420,7 @@ def test_transformer():
 
     transformer = TransformerLM(d_model, num_heads, num_layers, d_ff, max_seq_len, theta, vocab_size)
 
+
     bs, seq_len = 2, 10
     inputs = torch.randint(0, vocab_size, (bs, seq_len))
     outputs = transformer(inputs)
@@ -427,9 +428,11 @@ def test_transformer():
     assert outputs.shape == (bs, seq_len, vocab_size), f"Expected {(bs, seq_len, vocab_size)}, got {outputs.shape}"
     print(f"input shape: {inputs.shape}, output shape: {outputs.shape}")
 
-    for name, param in transformer.named_parameters():
-        print(name)
+    # transformer.parameters()
 
+    for name, param in transformer.named_parameters():
+        # print(name)
+        print(f"param type is {type(param)}")
 
 if __name__ == "__main__":
     test_linear()

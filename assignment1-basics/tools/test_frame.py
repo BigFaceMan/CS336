@@ -1,6 +1,6 @@
-
 import time
 import colorama
+
 def test_log(test_name):
     def decorator(f):
         def wrapper(*args, **kwargs):
