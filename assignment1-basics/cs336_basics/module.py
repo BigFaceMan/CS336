@@ -260,29 +260,38 @@ class TransformerLM(nn.Module):
         out = self.lm_head(x_norm)
         # out = softmax(out)
         return out
+    
+    def generate(self, input_ids: torch.Tensor, max_length: int, eos_tokens_id: list, temperature: float = 1.0, top_p: float = 1.0):
+        """
+        input_ids: (bs, seq_len)
+        """
+        generated = input_ids.clone()
+        for _ in range(max_length):
+            logits = self.forward(generated[:, -self.max_seq_len:])
+            next_token_logits = logits[:, -1, :]
+            if temperature != 1.0:
+                next_token_logits = next_token_logits / (temperature + 1e-8)
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                cumulative_probs = torch.cumsum(softmax(sorted_logits), dim=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = False
+                indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                next_token_logits[:, indices_to_remove] = -torch.inf
+            probs = softmax(next_token_logits)
+            next_tokens = torch.multinomial(probs, num_samples=1)
+            generated = torch.cat([generated, next_tokens], dim=-1)
+            if any((next_tokens == eos_token_id).all() for eos_token_id in eos_tokens_id):
+                break
+
+        return generated
 
 
-# R@X
-# def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
-#     """
-#     R@X.T.T
-#     X.T@R.T
-#     (seq_len, d_model, de_model)
-#     (bs, seq_len, d_model, 1)
-#     """
-#     cos_val = self.cos[token_positions]
-#     sin_val = self.sin[token_positions]
-#     bs, seq_len = x.shape[:2]
 
-#     R = torch.zeros(bs, seq_len, self.d_k, self.d_k, device=x.device, dtype=x.dtype)
-#     idx = torch.arange(self.d_k // 2, device=R.device) * 2
-#     R[:, :, idx, idx] = cos_val
-#     R[:, :, idx + 1, idx + 1] = cos_val
-#     R[:, :, idx, idx + 1] = -sin_val
-#     R[:, :, idx + 1, idx] = sin_val
-#     RT = R.transpose(-2, -1)
-#     x = x.unsqueeze(dim=-2)
-#     return (x @ RT).transpose(-2, -1).squeeze(-1)
+
+
+
 
 
 # test part --------------------------------------------------------------------------------------------------------------------------

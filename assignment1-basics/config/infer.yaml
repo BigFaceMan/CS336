@@ -1,0 +1,10 @@
+model_path: "output/model.pt"
+vocab_path: "output/tokenizer_small_story"
+vocab_size: 500
+d_model: 512
+d_ff: 2048
+num_layers: 6
+num_heads: 8
+max_seq_len: 256
+device: "cpu"
+seed: 42
