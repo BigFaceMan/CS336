@@ -1,9 +1,18 @@
 import os
 import regex as re
+import yaml
 from typing import BinaryIO
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
+
+
+def get_base_path():
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "config")
+    base_yaml_path = os.path.join(config_dir, "base.yaml")
+    with open(base_yaml_path) as f:
+        config = yaml.safe_load(f)
+    return config.get("base_path", ".")
 
 
 PATTERN = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
@@ -266,11 +275,12 @@ def train_bpe(
 
 
 if __name__ == "__main__":
-    input_path = "/home/spsong/Code/cs336/assignment1-basics/data/TinyStoriesV2-GPT4-valid.txt"
+    BASE_PATH = get_base_path()
+    input_path = os.path.join(BASE_PATH, "data/TinyStoriesV2-GPT4-valid.txt")
     vocab_size = 500
     num_workers = 4
     special_tokens = ["<|endoftext|>"]
-    output_dir = "/home/spsong/Code/cs336/assignment1-basics/data"
+    output_dir = os.path.join(BASE_PATH, "data")
 
     # vocab, merges = train_bpe(input_path, vocab_size, special_token, 4)
 

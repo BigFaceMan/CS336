@@ -1,6 +1,6 @@
-input_path: "/home/spsong/Code/cs336/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt"
+input_path: "data/TinyStoriesV2-GPT4-train.txt"
 vocab_size: 10000
 num_workers: 4
 special_tokens:
   - "<|endoftext|>"
-output_dir: "/home/spsong/Code/cs336/assignment1-basics/output/tokenizer_full_story"
+output_dir: "output/tokenizer_full_story"

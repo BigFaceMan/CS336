@@ -1,15 +1,26 @@
+import os
 import regex as re
 import cProfile
+import yaml
 from tools.profile import profile
 from tqdm import tqdm
 
+
+def get_base_path():
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "config")
+    base_yaml_path = os.path.join(config_dir, "base.yaml")
+    with open(base_yaml_path) as f:
+        config = yaml.safe_load(f)
+    return config.get("base_path", ".")
+
+
 def log(name, val):
-    return 
+    return
     # print(f"{name} is {val}, len is {len(val)}")
 
 
 def get_docs(input_path, special_tokens):
-    with open(input_path, 'r') as f:
+    with open(input_path, "r") as f:
         content = f.read()
 
     if not special_tokens:
@@ -21,24 +32,26 @@ def get_docs(input_path, special_tokens):
 
     return docs
 
+
 def pre_tokenization(docs: list[str]):
     pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     pre_token_cache = dict()
     for doc in docs:
         pattern_items = re.findall(pattern, doc)
         for item in pattern_items:
-            item_utf8 = item.encode('utf-8')
+            item_utf8 = item.encode("utf-8")
             pre_token_cache[tuple(item_utf8)] = pre_token_cache.get(tuple(item_utf8), 0) + 1
     return pre_token_cache
 
+
 def get_max_frequency_pair(pre_token_cache: dict[tuple, int], vocab: dict[int, bytes]):
-    cnt = {} 
+    cnt = {}
     for key, val in pre_token_cache.items():
         for i in range(len(key) - 1):
             cnt[tuple([key[i], key[i + 1]])] = cnt.get(tuple([key[i], key[i + 1]]), 0) + val
-    
+
     key_mx, val_mx = tuple(), 0
-    key_mx_ls = [] 
+    key_mx_ls = []
 
     for key, val in cnt.items():
         if val > val_mx:
@@ -54,9 +67,7 @@ def get_max_frequency_pair(pre_token_cache: dict[tuple, int], vocab: dict[int, b
     return key_mx, val_mx
 
 
-def train_bpe(input_path: str, 
-            vocab_size: int, 
-            special_tokens: list[str]):
+def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
     vocab = dict()
     merge = list()
 
@@ -98,19 +109,19 @@ def train_bpe(input_path: str,
                 else:
                     key_new.append(key[i])
                     i += 1
-            
+
             pre_token_cache_new[tuple(key_new)] = val
         pre_token_cache = pre_token_cache_new
         vocab_idx += 1
         process_bar.update(1)
     process_bar.close()
     return vocab, merge
-    
+
 
 if __name__ == "__main__":
-    input_path = "/home/spsong/Code/cs336/assignment1-basics/data/TinyStoriesV2-GPT4-valid.txt"
+    BASE_PATH = get_base_path()
+    input_path = os.path.join(BASE_PATH, "data/TinyStoriesV2-GPT4-valid.txt")
     vocab_size = 500
     special_token = ["<|endoftext|>"]
 
     vocab, merge = train_bpe(input_path, vocab_size, special_token)
-    

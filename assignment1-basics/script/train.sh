@@ -1,6 +1,7 @@
 #!/bin/bash
 
-cd /home/spsong/Code/cs336/assignment1-basics/cs336_basics
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
-CONFIG_PATH="/home/spsong/Code/cs336/assignment1-basics/config/train_small_story.yaml"
-python train.py --config $CONFIG_PATH
+CONFIG_PATH="config/train_small_story.yaml"
+python cs336_basics/train.py --config $CONFIG_PATH

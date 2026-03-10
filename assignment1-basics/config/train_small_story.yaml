@@ -9,9 +9,8 @@ d_model: 512
 d_ff: 2048
 device: "cpu"
 seed: 42
-data_path: null
 theta: 10000
 vocab_size: 500
-data_path: "/home/spsong/Code/cs336/assignment1-basics/data/TinyStoriesV2-GPT4-valid.txt"
-vocab_path: "/home/spsong/Code/cs336/assignment1-basics/output/tokenizer_small_story"
-output_path: "/home/spsong/Code/cs336/assignment1-basics/output/train_small_story" 
+data_path: "data/TinyStoriesV2-GPT4-valid.txt"
+vocab_path: "output/tokenizer_small_story"
+output_path: "output/train_small_story" 

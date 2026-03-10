@@ -7,6 +7,15 @@ from typing import BinaryIO
 from tqdm import tqdm
 from multiprocessing import Process, Queue
 from collections import Counter
+import yaml
+
+
+def get_base_path():
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "config")
+    base_yaml_path = os.path.join(config_dir, "base.yaml")
+    with open(base_yaml_path) as f:
+        config = yaml.safe_load(f)
+    return config.get("base_path", ".")
 
 
 def find_chunk_boundaries(
@@ -55,6 +64,7 @@ def find_chunk_boundaries(
     # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
     return sorted(set(chunk_boundaries))
 
+
 def pre_tokenization(docs: list[str]):
     pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
@@ -62,10 +72,11 @@ def pre_tokenization(docs: list[str]):
     for doc in docs:
         pattern_items = re.findall(pattern, doc)
         for item in pattern_items:
-            item_utf8 = item.encode('utf-8')
+            item_utf8 = item.encode("utf-8")
             pre_token_cache[tuple(item_utf8)] = pre_token_cache.get(tuple(item_utf8), 0) + 1
 
     return pre_token_cache
+
 
 def worker(docs, q):
     process_name = multiprocessing.current_process().name
@@ -73,9 +84,10 @@ def worker(docs, q):
 
     pre_token_cache = pre_tokenization(docs)
     q.put(pre_token_cache)
-    
+
+
 def get_pre_token(input_path, special_tokens):
-    with open(input_path, 'r') as f:
+    with open(input_path, "r") as f:
         content = f.read()
 
     if not special_tokens:
@@ -86,10 +98,7 @@ def get_pre_token(input_path, special_tokens):
     pre_toekn_cache = pre_tokenization(docs)
 
     return pre_toekn_cache
-    
-        
 
-    
 
 def get_doc(input_path, special_tokens, num_works):
     q = Queue()
@@ -113,7 +122,7 @@ def get_doc(input_path, special_tokens, num_works):
             p = Process(target=worker, args=(docs, q))
             p.start()
             processes.append(p)
-        
+
         result = []
 
         for _ in processes:
@@ -121,15 +130,15 @@ def get_doc(input_path, special_tokens, num_works):
 
         for p in processes:
             p.join()
-            
 
     pre_token_caches = {}
 
     for d in result:
         for k, v in d.items():
             pre_token_caches[k] = pre_token_caches.get(k, 0) + v
-            
+
     return pre_token_caches
+
 
 def build_reverse_index(pre_token_cache: dict[tuple, int]):
     pre_ids_count = []
@@ -137,27 +146,32 @@ def build_reverse_index(pre_token_cache: dict[tuple, int]):
     pair_index = dict()
 
     for k, v in pre_token_cache.items():
-        pre_ids_count.append({"ids" : k, "cnt" : v })
+        pre_ids_count.append({"ids": k, "cnt": v})
         for i in range(len(k) - 1):
             pair_key = tuple([k[i], k[i + 1]])
             pair_count[pair_key] = pair_count.get(pair_key, 0) + v
             pair_index.setdefault(pair_key, set()).add(len(pre_ids_count) - 1)
-        
+
     return pre_ids_count, pair_count, pair_index
 
 
-def run_merge(pre_ids_count: list[dict], pair_count: dict[tuple, int], pair_index: dict[tuple[int, int], set], vocab_size: int, vocab: dict[int, bytes]):
+def run_merge(
+    pre_ids_count: list[dict],
+    pair_count: dict[tuple, int],
+    pair_index: dict[tuple[int, int], set],
+    vocab_size: int,
+    vocab: dict[int, bytes],
+):
     merges = []
     vocab_idx = len(vocab)
 
     process_bar = tqdm(total=vocab_size, initial=vocab_idx)
 
     while vocab_idx < vocab_size:
-
         if not pair_count:
-            break 
+            break
 
-        pair_mx = max(pair_count, key=lambda p:(pair_count[p], vocab[p[0]], vocab[p[1]]))
+        pair_mx = max(pair_count, key=lambda p: (pair_count[p], vocab[p[0]], vocab[p[1]]))
 
         vocab[vocab_idx] = vocab[pair_mx[0]] + vocab[pair_mx[1]]
         merges.append(tuple([vocab[pair_mx[0]], vocab[pair_mx[1]]]))
@@ -178,9 +192,9 @@ def run_merge(pre_ids_count: list[dict], pair_count: dict[tuple, int], pair_inde
                 else:
                     new_ids.append(ids[i])
                     i += 1
-            
-            old_pair = [(ids[i], ids[i + 1]) for i in range(len(ids) - 1)]           
-            new_pair = [(new_ids[i], new_ids[i + 1]) for i in range(len(new_ids) - 1)]           
+
+            old_pair = [(ids[i], ids[i + 1]) for i in range(len(ids) - 1)]
+            new_pair = [(new_ids[i], new_ids[i + 1]) for i in range(len(new_ids) - 1)]
 
             for p in old_pair:
                 pair_count[p] -= cnt
@@ -190,27 +204,22 @@ def run_merge(pre_ids_count: list[dict], pair_count: dict[tuple, int], pair_inde
                     pair_index[p].discard(index)
                     if not pair_index[p]:
                         pair_index.pop(p, None)
-            
+
             for p in new_pair:
                 pair_count[p] = pair_count.get(p, 0) + cnt
                 pair_index.setdefault(p, set()).add(index)
-            
+
             item["ids"] = new_ids
-            
+
         vocab_idx += 1
         process_bar.update(1)
 
     process_bar.close()
-            
 
     return vocab, merges
-    
 
 
-def train_bpe(input_path: str, 
-            vocab_size: int, 
-            special_tokens: list[str],
-            num_works: int):
+def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str], num_works: int):
     vocab = dict()
     pre_token_cache = get_doc(input_path, special_tokens, num_works)
     # pre_token_cache = get_pre_token(input_path, special_tokens)
@@ -224,17 +233,18 @@ def train_bpe(input_path: str,
     for special_token in special_tokens:
         vocab[vocab_idx] = special_token.encode("utf-8")
         vocab_idx += 1
-    
+
     pre_ids_count, pair_count, pair_index = build_reverse_index(pre_token_cache)
 
     vocab, merges = run_merge(pre_ids_count, pair_count, pair_index, vocab_size, vocab)
 
     return vocab, merges
-    
+
 
 if __name__ == "__main__":
-    input_path = "/home/spsong/Code/cs336/assignment1-basics/data/TinyStoriesV2-GPT4-valid.txt"
-    # input_path = "/home/spsong/Code/cs336/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt"
+    BASE_PATH = get_base_path()
+    input_path = os.path.join(BASE_PATH, "data/TinyStoriesV2-GPT4-valid.txt")
+    # input_path = os.path.join(BASE_PATH, "data/TinyStoriesV2-GPT4-train.txt")
     vocab_size = 500
     special_token = ["<|endoftext|>"]
 
@@ -247,4 +257,4 @@ if __name__ == "__main__":
 
     stats = pstats.Stats(profiler)
     stats.sort_stats("cumtime")  # 按累计时间排序
-    stats.print_stats(20)  
+    stats.print_stats(20)
