@@ -36,8 +36,8 @@ def get_batch(dataset: npt.NDArray, batch_size: int, context_length: int, device
     n = len(dataset)
     dataset = torch.from_numpy(dataset).to(device)
     ix = torch.randint(0, n - context_length, (batch_size,))
-    x = torch.stack([dataset[i:i+context_length] for i in ix])
-    y = torch.stack([dataset[i+1:i+1+context_length] for i in ix])
+    x = torch.stack([dataset[i:i+context_length] for i in ix]).long()
+    y = torch.stack([dataset[i+1:i+1+context_length] for i in ix]).long()
     return x, y
 
 def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, iteration: int, out_path: str | os.PathLike | BinaryIO | IO[bytes]):

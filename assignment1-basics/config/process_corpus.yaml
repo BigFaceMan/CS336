@@ -1,0 +1,4 @@
+input_path: "data/TinyStoriesV2-GPT4-valid.txt"
+vocab_path: "output/tokenizer_small_story"
+output_bin: "output/TinyStoriesV2-GPT4-valid.bin"
+chunk_size_mb: 50

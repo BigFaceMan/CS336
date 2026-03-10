@@ -125,7 +125,7 @@ def grad_clip(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps:
     for param in parameters:
         if param.grad is None:
             continue
-        gdl2 += (param.grad**2).sum()
+        gdl2 += (param.grad.detach()**2).sum()
 
     gdl2 = torch.sqrt(gdl2)
     
@@ -134,7 +134,7 @@ def grad_clip(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps:
         for param in parameters:
             if param.grad is None:
                 continue
-            param.grad.mul_(inv)
+            param.grad.detach().mul_(inv)
     
         
 

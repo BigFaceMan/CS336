@@ -1,13 +1,10 @@
 import os
 import regex as re
-import cProfile
-import pstats
-import multiprocessing
+import yaml
 from typing import BinaryIO
 from tqdm import tqdm
-from multiprocessing import Process, Queue
-from collections import Counter
-import yaml
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass, field
 
 
 def get_base_path():
@@ -18,243 +15,282 @@ def get_base_path():
     return config.get("base_path", ".")
 
 
+PATTERN = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+
+
 def find_chunk_boundaries(
     file: BinaryIO,
     desired_num_chunks: int,
     split_special_token: bytes,
 ) -> list[int]:
-    """
-    Chunk the file into parts that can be counted independently.
-    May return fewer chunks if the boundaries end up overlapping.
-    """
-    assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
-
-    # Get total file size in bytes
     file.seek(0, os.SEEK_END)
     file_size = file.tell()
     file.seek(0)
 
     chunk_size = file_size // desired_num_chunks
 
-    # Initial guesses for chunk boundary locations, uniformly spaced
-    # Chunks start on previous index, don't include last index
     chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
     chunk_boundaries[-1] = file_size
 
-    mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
+    mini_chunk_size = 4096
 
     for bi in range(1, len(chunk_boundaries) - 1):
         initial_position = chunk_boundaries[bi]
-        file.seek(initial_position)  # Start at boundary guess
+        file.seek(initial_position)
         while True:
-            mini_chunk = file.read(mini_chunk_size)  # Read a mini chunk
+            mini_chunk = file.read(mini_chunk_size)
 
-            # If EOF, this boundary should be at the end of the file
             if mini_chunk == b"":
                 chunk_boundaries[bi] = file_size
                 break
 
-            # Find the special token in the mini chunk
             found_at = mini_chunk.find(split_special_token)
             if found_at != -1:
                 chunk_boundaries[bi] = initial_position + found_at
                 break
             initial_position += mini_chunk_size
 
-    # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
     return sorted(set(chunk_boundaries))
 
 
-def pre_tokenization(docs: list[str]):
-    pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+def _pre_tokenize_chunk(args: tuple) -> dict[tuple[int, ...], int]:
+    chunk, special_tokens = args
+    if not special_tokens:
+        docs = [chunk]
+    else:
+        pattern = "|".join(map(re.escape, special_tokens))
+        docs = [d for d in re.split(pattern, chunk) if d]
 
-    pre_token_cache = dict()
+    pre_token_cache: dict[tuple[int, ...], int] = {}
     for doc in docs:
-        pattern_items = re.findall(pattern, doc)
-        for item in pattern_items:
+        items = PATTERN.findall(doc)
+        for item in items:
             item_utf8 = item.encode("utf-8")
-            pre_token_cache[tuple(item_utf8)] = pre_token_cache.get(tuple(item_utf8), 0) + 1
+            key = tuple(item_utf8)
+            pre_token_cache[key] = pre_token_cache.get(key, 0) + 1
 
     return pre_token_cache
 
 
-def worker(docs, q):
-    process_name = multiprocessing.current_process().name
-    print(f"当前进程: {process_name}")
+@dataclass
+class PreTokenizer:
+    special_tokens: list[str] = field(default_factory=list)
+    split_special_token: bytes = field(default=b"<|endoftext|>")
 
-    pre_token_cache = pre_tokenization(docs)
-    q.put(pre_token_cache)
+    def _split_by_special_tokens(self, content: str) -> list[str]:
+        if not self.special_tokens:
+            return [content]
+        pattern = "|".join(map(re.escape, self.special_tokens))
+        return [d for d in re.split(pattern, content) if d]
 
-
-def get_pre_token(input_path, special_tokens):
-    with open(input_path, "r") as f:
-        content = f.read()
-
-    if not special_tokens:
-        docs = [content]
-    else:
-        pattern = "|".join(map(re.escape, special_tokens))
-        docs = [d for d in re.split(pattern, content) if d]
-    pre_toekn_cache = pre_tokenization(docs)
-
-    return pre_toekn_cache
-
-
-def get_doc(input_path, special_tokens, num_works):
-    q = Queue()
-    processes = []
-    ## Usage
-    with open(input_path, "rb") as f:
-        num_processes = num_works
-        boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
-        # The following is a serial implementation, but you can parallelize this
-        # by sending each start/end pair to a set of processes.
-        for start, end in zip(boundaries[:-1], boundaries[1:]):
-            f.seek(start)
-            chunk = f.read(end - start).decode("utf-8", errors="ignore")
-            # Run pre-tokenization on your chunk and store the counts for each pre-token
-            if not special_tokens:
-                docs = [chunk]
-            else:
-                pattern = "|".join(map(re.escape, special_tokens))
-                docs = [d for d in re.split(pattern, chunk) if d]
-
-            p = Process(target=worker, args=(docs, q))
-            p.start()
-            processes.append(p)
-
+    def tokenize(self, text: str) -> list[tuple[int, ...]]:
+        docs = self._split_by_special_tokens(text)
         result = []
+        for doc in docs:
+            items = PATTERN.findall(doc)
+            for item in items:
+                item_utf8 = item.encode("utf-8")
+                result.append(tuple(item_utf8))
+        return result
 
-        for _ in processes:
-            result.append(q.get())
+    def tokenize_file(self, input_path: str, num_workers: int = 1) -> dict[tuple[int, ...], int]:
+        if num_workers <= 1:
+            return self._tokenize_file_serial(input_path)
+        return self._tokenize_file_parallel(input_path, num_workers)
 
-        for p in processes:
-            p.join()
+    def _tokenize_file_serial(self, input_path: str) -> dict[tuple[int, ...], int]:
+        with open(input_path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-    pre_token_caches = {}
+        docs = self._split_by_special_tokens(content)
+        pre_token_cache: dict[tuple[int, ...], int] = {}
 
-    for d in result:
-        for k, v in d.items():
-            pre_token_caches[k] = pre_token_caches.get(k, 0) + v
+        for doc in docs:
+            items = PATTERN.findall(doc)
+            for item in items:
+                item_utf8 = item.encode("utf-8")
+                key = tuple(item_utf8)
+                pre_token_cache[key] = pre_token_cache.get(key, 0) + 1
 
-    return pre_token_caches
+        return pre_token_cache
+
+    def _tokenize_file_parallel(self, input_path: str, num_workers: int) -> dict[tuple[int, ...], int]:
+        with open(input_path, "rb") as f:
+            boundaries = find_chunk_boundaries(f, num_workers, self.split_special_token)
+
+        chunks = []
+        with open(input_path, "rb") as f:
+            for start, end in zip(boundaries[:-1], boundaries[1:]):
+                f.seek(start)
+                chunk = f.read(end - start).decode("utf-8", errors="ignore")
+                chunks.append((chunk, self.special_tokens))
+
+        pre_token_caches: dict[tuple[int, ...], int] = {}
+
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            futures = [executor.submit(_pre_tokenize_chunk, args) for args in chunks]
+            for future in as_completed(futures):
+                result = future.result()
+                for k, v in result.items():
+                    pre_token_caches[k] = pre_token_caches.get(k, 0) + v
+
+        return pre_token_caches
 
 
-def build_reverse_index(pre_token_cache: dict[tuple, int]):
-    pre_ids_count = []
-    pair_count = Counter()
-    pair_index = dict()
+@dataclass
+class BPETrainer:
+    special_tokens: list[str] = field(default_factory=list)
+    vocab: dict[int, bytes] = field(default_factory=dict)
+    merges: list[tuple[bytes, bytes]] = field(default_factory=list)
+    pre_tokenizer: PreTokenizer = field(init=False)
 
-    for k, v in pre_token_cache.items():
-        pre_ids_count.append({"ids": k, "cnt": v})
-        for i in range(len(k) - 1):
-            pair_key = tuple([k[i], k[i + 1]])
-            pair_count[pair_key] = pair_count.get(pair_key, 0) + v
-            pair_index.setdefault(pair_key, set()).add(len(pre_ids_count) - 1)
+    def __post_init__(self):
+        self.pre_tokenizer = PreTokenizer(special_tokens=self.special_tokens)
+        self.vocab = {i: bytes([i]) for i in range(256)}
+        self._vocab_idx = len(self.vocab)
 
-    return pre_ids_count, pair_count, pair_index
+        for special_token in self.special_tokens:
+            self.vocab[self._vocab_idx] = special_token.encode("utf-8")
+            self._vocab_idx += 1
 
+    @property
+    def vocab_size_with_special(self) -> int:
+        return self._vocab_idx
 
-def run_merge(
-    pre_ids_count: list[dict],
-    pair_count: dict[tuple, int],
-    pair_index: dict[tuple[int, int], set],
-    vocab_size: int,
-    vocab: dict[int, bytes],
-):
-    merges = []
-    vocab_idx = len(vocab)
+    def _add_merged_token(self, pair: tuple[int, int]) -> int:
+        merged_bytes = self.vocab[pair[0]] + self.vocab[pair[1]]
+        self.merges.append((self.vocab[pair[0]], self.vocab[pair[1]]))
+        self.vocab[self._vocab_idx] = merged_bytes
+        self._vocab_idx += 1
+        return self._vocab_idx - 1
 
-    process_bar = tqdm(total=vocab_size, initial=vocab_idx)
+    def _build_indices(self, pre_token_cache: dict[tuple[int, ...], int]):
+        pre_ids_count: list[tuple[tuple[int, ...], int]] = []
+        pair_count: dict[tuple[int, int], int] = {}
+        pair_index: dict[tuple[int, int], list[int]] = {}
 
-    while vocab_idx < vocab_size:
+        for token_bytes, count in pre_token_cache.items():
+            pre_ids_count.append((token_bytes, count))
+            idx = len(pre_ids_count) - 1
+
+            for i in range(len(token_bytes) - 1):
+                pair = (token_bytes[i], token_bytes[i + 1])
+                pair_count[pair] = pair_count.get(pair, 0) + count
+                if pair not in pair_index:
+                    pair_index[pair] = []
+                pair_index[pair].append(idx)
+
+        return pre_ids_count, pair_count, pair_index
+
+    def _find_best_pair(self, pair_count: dict[tuple[int, int], int]) -> tuple[int, int] | None:
         if not pair_count:
-            break
+            return None
+        return max(pair_count, key=lambda p: (pair_count[p], self.vocab[p[0]], self.vocab[p[1]]))
 
-        pair_mx = max(pair_count, key=lambda p: (pair_count[p], vocab[p[0]], vocab[p[1]]))
+    def train(self, input_path: str, target_vocab_size: int, num_workers: int = 4):
+        pre_token_cache = self.pre_tokenizer.tokenize_file(input_path, num_workers)
 
-        vocab[vocab_idx] = vocab[pair_mx[0]] + vocab[pair_mx[1]]
-        merges.append(tuple([vocab[pair_mx[0]], vocab[pair_mx[1]]]))
+        pre_ids_count, pair_count, pair_index = self._build_indices(pre_token_cache)
 
-        index_2_update = pair_index.get(pair_mx, set()).copy()
+        target_size = target_vocab_size
 
-        for index in index_2_update:
-            item = pre_ids_count[index]
-            ids = item["ids"]
-            cnt = item["cnt"]
-            i = 0
-            new_ids = []
+        with tqdm(total=target_size, initial=self._vocab_idx, desc="bpe_merge") as pbar:
+            while self._vocab_idx < target_size:
+                if not pair_count:
+                    break
 
-            while i < len(ids):
-                if i + 1 < len(ids) and ids[i] == pair_mx[0] and ids[i + 1] == pair_mx[1]:
-                    new_ids.append(vocab_idx)
-                    i += 2
-                else:
-                    new_ids.append(ids[i])
-                    i += 1
+                best_pair = self._find_best_pair(pair_count)
+                if best_pair is None:
+                    break
 
-            old_pair = [(ids[i], ids[i + 1]) for i in range(len(ids) - 1)]
-            new_pair = [(new_ids[i], new_ids[i + 1]) for i in range(len(new_ids) - 1)]
+                new_token_id = self._add_merged_token(best_pair)
+                indices_to_update = pair_index.pop(best_pair, [])
 
-            for p in old_pair:
-                pair_count[p] -= cnt
-                if not pair_count[p]:
-                    pair_count.pop(p, None)
-                if p in pair_index:
-                    pair_index[p].discard(index)
-                    if not pair_index[p]:
-                        pair_index.pop(p, None)
+                for idx in indices_to_update:
+                    token_ids, cnt = pre_ids_count[idx]
+                    new_ids = []
 
-            for p in new_pair:
-                pair_count[p] = pair_count.get(p, 0) + cnt
-                pair_index.setdefault(p, set()).add(index)
+                    i = 0
+                    while i < len(token_ids):
+                        if i + 1 < len(token_ids) and token_ids[i] == best_pair[0] and token_ids[i + 1] == best_pair[1]:
+                            new_ids.append(new_token_id)
+                            i += 2
+                        else:
+                            new_ids.append(token_ids[i])
+                            i += 1
 
-            item["ids"] = new_ids
+                    old_pairs = [(token_ids[i], token_ids[i + 1]) for i in range(len(token_ids) - 1)]
+                    new_pairs = [(new_ids[i], new_ids[i + 1]) for i in range(len(new_ids) - 1)]
 
-        vocab_idx += 1
-        process_bar.update(1)
+                    for p in old_pairs:
+                        pair_count[p] -= cnt
+                        if pair_count[p] == 0:
+                            del pair_count[p]
+                            if p in pair_index:
+                                del pair_index[p]
 
-    process_bar.close()
+                    for p in new_pairs:
+                        pair_count[p] = pair_count.get(p, 0) + cnt
+                        if p not in pair_index:
+                            pair_index[p] = []
+                        pair_index[p].append(idx)
 
-    return vocab, merges
+                    pre_ids_count[idx] = (tuple(new_ids), cnt)
+
+                pbar.update(1)
+
+        return self.vocab, self.merges
+
+    def save_vocab(self, path: str):
+        import json
+        import base64
+
+        vocab_json = {str(k): base64.b64encode(v).decode("ascii") for k, v in self.vocab.items()}
+        with open(path, "w") as f:
+            json.dump(vocab_json, f)
+
+    def save_merges(self, path: str):
+        import json
+        import base64
+
+        merge_json = [
+            tuple([base64.b64encode(v[0]).decode("ascii"), base64.b64encode(v[1]).decode("ascii")]) for v in self.merges
+        ]
+
+        with open(path, "w") as f:
+            json.dump(merge_json, f)
 
 
-def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str], num_works: int):
-    vocab = dict()
-    pre_token_cache = get_doc(input_path, special_tokens, num_works)
-    # pre_token_cache = get_pre_token(input_path, special_tokens)
+def train_bpe(
+    input_path: str,
+    vocab_size: int,
+    special_tokens: list[str] | None = None,
+    num_workers: int = 4,
+) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+    if special_tokens is None:
+        special_tokens = []
 
-    vocab_idx = 0
-
-    for i in range(256):
-        vocab[vocab_idx] = bytes([i])
-        vocab_idx += 1
-
-    for special_token in special_tokens:
-        vocab[vocab_idx] = special_token.encode("utf-8")
-        vocab_idx += 1
-
-    pre_ids_count, pair_count, pair_index = build_reverse_index(pre_token_cache)
-
-    vocab, merges = run_merge(pre_ids_count, pair_count, pair_index, vocab_size, vocab)
-
-    return vocab, merges
+    trainer = BPETrainer(special_tokens=special_tokens)
+    return trainer.train(input_path, vocab_size, num_workers)
 
 
 if __name__ == "__main__":
     BASE_PATH = get_base_path()
     input_path = os.path.join(BASE_PATH, "data/TinyStoriesV2-GPT4-valid.txt")
-    # input_path = os.path.join(BASE_PATH, "data/TinyStoriesV2-GPT4-train.txt")
     vocab_size = 500
-    special_token = ["<|endoftext|>"]
+    num_workers = 4
+    special_tokens = ["<|endoftext|>"]
+    output_dir = os.path.join(BASE_PATH, "data")
 
-    profiler = cProfile.Profile()
-    profiler.enable()
+    # vocab, merges = train_bpe(input_path, vocab_size, special_token, 4)
 
-    vocab, merge = train_bpe(input_path, vocab_size, special_token, 4)
+    trainer: BPETrainer = BPETrainer(special_tokens=special_tokens)
+    vocab, merges = trainer.train(input_path, vocab_size, num_workers)
 
-    profiler.disable()
+    print(f"Final vocab size: {len(vocab)}")
+    print(f"Number of merges: {len(merges)}")
 
-    stats = pstats.Stats(profiler)
-    stats.sort_stats("cumtime")  # 按累计时间排序
-    stats.print_stats(20)
+    trainer.save_vocab(f"{output_dir}/vocab.json")
+    trainer.save_merges(f"{output_dir}/merges.json")
+    print(f"Saved vocab to {output_dir}/vocab.json")
+    print(f"Saved merges to {output_dir}/merges.json")

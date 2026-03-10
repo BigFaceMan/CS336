@@ -20,6 +20,8 @@ class TrainConfig:
     end_iters: int = 10000
     save_interval: int = 10000
     lr: float = 0.001
+    max_norm: float = 1.0
+    min_lr: float = 6e-5
     batch_size: int = 32
     max_seq_len: int = 1000
     num_layers: int = 6
@@ -28,37 +30,22 @@ class TrainConfig:
     d_ff: int = 2048
     device: str = "cuda"
     seed: int = 42
-    data_path: Optional[str] = None
+    train_data_path: Optional[str] = None
+    val_data_path: Optional[str] = None
     vocab_path: Optional[str] = None
     output_path: Optional[str] = None
     theta: int = 10000
     vocab_size: int = 10000
+    warmup_iter: int = 1000
     config: Optional[str] = field(default=None, repr=False)
-
-
-def load_dataset(config: TrainConfig):
-    # 1. dataload
-    assert config.vocab_path is not None, "vocab_path is required"
-    tokenizer = Tokenizer.from_files(
-        os.path.join(config.vocab_path, "vocab.json"), os.path.join(config.vocab_path, "merges.json")
-    )
-
-    dataset = []
-
-    with open(config.data_path, 'r') as f:
-        for ids in tokenizer.encode_iterable(f):
-            dataset.append(ids)
-
-    return dataset, tokenizer
-
 
 def train(config: TrainConfig):
     # load dataset
-    dataset, tokenizer = load_dataset(config)
-    dataset = np.array(dataset)
+    train_data = np.memmap(config.train_data_path, dtype=np.uint16, mode='r')
+    valid_data = np.memmap(config.val_data_path, dtype=np.uint16, mode='r')
 
-    print(type(dataset))
-    print(f"dataset len {len(dataset)}")
+    print(f"train_dataset len {len(train_data)}")
+    print(f"valie_dataset len {len(valid_data)}")
 
     swanlab.init(
         project="cs336_lab1_small_story", 
@@ -81,16 +68,23 @@ def train(config: TrainConfig):
         torch.float32,
     ).to(config.device)
 
+
     optimizer = AdamW(model.parameters(), config.lr, 0.01, (0.9, 0.999))
-    # schedule = CosineAnnealingSchedue(optimizer, config.lr, )
+    schedule = CosineAnnealingSchedue(optimizer, config.lr, config.min_lr, config.warmup_iter, config.end_iters)
+    start_iter = 0
+    ckpt_path = os.path.join(config.output_path, "ckpt.th")
+    if os.path.exists(ckpt_path):
+        start_iter = load_checkpoint(ckpt_path, model, optimizer)
+        schedule.step = start_iter
+        print(f"Resuming from iteration {start_iter}")
 
 
-    process_bar = tqdm(range(config.begin_iters, config.end_iters), desc="llm train")
+    process_bar = tqdm(range(start_iter, config.end_iters), desc="llm train")
 
     # train loop
-    model.train()
-    for iter in range(config.begin_iters, config.end_iters):
-        inputs, targets = get_batch(dataset, config.batch_size, config.max_seq_len, config.device)
+    for iter in range(start_iter, config.end_iters):
+        model.train()
+        inputs, targets = get_batch(train_data, config.batch_size, config.max_seq_len, config.device)
 
         outputs = model(inputs)
 
@@ -98,25 +92,35 @@ def train(config: TrainConfig):
 
         loss.backward()
 
-        # grad_clip(model.parameters(), 1.0)
+        grad_clip(model.parameters(), 1.0)
         
 
         optimizer.step()
         optimizer.zero_grad()
+        schedule.step()
 
-        with torch.no_grad():
-            if iter % 10 == 0:
+        if iter % 100 == 0 or iter == config.end_iters - 1:
+            model.eval()
+            with torch.no_grad():
+                vx, vy = get_batch(valid_data, config.batch_size, config.max_seq_len, config.device)
+                v_logits = model(vx)
+                v_loss = cross_entropy(v_logits, vy)
                 swanlab.log({"loss" : loss.item()}, iter)
+                print(f"Iter {iter}: train_loss {loss.item():.4f}, val_loss {v_loss.item():.4f}")
+                swanlab.log({
+                    "train/loss": loss.item(), 
+                    "val/loss": v_loss.item(), 
+                    "iter": iter + 1
+                })
+
                 process_bar.set_postfix({"loss" : loss.item()})
-                process_bar.update(10)
-            if iter == config.end_iters - 1:
-                process_bar.close()
+                process_bar.update(100)
 
-            if iter % config.save_interval == 0:
-                save_checkpoint(model, optimizer, iter, os.path.join(config.output_path, "checkpoint.pth"))
+        if iter % config.save_interval == 0:
+            save_checkpoint(model, optimizer, iter, os.path.join(config.output_path, "ckpt.pth"))
 
-    save_checkpoint(model, optimizer, iter, os.path.join(config.output_path, "checkpoint.pth"))
-
+    save_checkpoint(model, optimizer, iter, os.path.join(config.output_path, "ckpt.pth"))
+    process_bar.close()
 
 
 
@@ -126,20 +130,26 @@ if __name__ == "__main__":
     parse.add_argument("--begin_iters", type=int, default=0)
     parse.add_argument("--end_iters", type=int, default=10000)
     parse.add_argument("--save_interval", type=int, default=100)
-    parse.add_argument("--data_path", type=str)
-    parse.add_argument("--vocab_path", type=str)
+    parse.add_argument("--train_data_path", type=str)
+    parse.add_argument("--val_data_path", type=str)
     parse.add_argument("--output_path", type=str)
+
+    parse.add_argument("--vocab_path", type=str)
+    parse.add_argument("--vocab_size", type=int, default=None)
     parse.add_argument("--lr", type=float, default=None)
     parse.add_argument("--batch_size", type=int, default=None)
+    parse.add_argument("--warmup_iter", type=int, default=1000)
     parse.add_argument("--max_seq_len", type=int, default=None)
     parse.add_argument("--num_layers", type=int, default=None)
     parse.add_argument("--num_heads", type=int, default=None)
     parse.add_argument("--d_model", type=int, default=None)
     parse.add_argument("--d_ff", type=int, default=None)
+    parse.add_argument("--max_norm", type=float, default=1.0)
+    parse.add_argument("--min_lr", type=float, default=6e-5)
     parse.add_argument("--theta", type=int, default=None)
-    parse.add_argument("--vocab_size", type=int, default=None)
     parse.add_argument("--device", type=str, default=None)
     parse.add_argument("--seed", type=int, default=None)
+    # parse.add_argument("--exp_name", type=str, default=None)
 
     cli_args = parse.parse_args()
 

@@ -11,6 +11,7 @@ device: "cpu"
 seed: 42
 theta: 10000
 vocab_size: 500
-data_path: "data/TinyStoriesV2-GPT4-valid.txt"
+train_data_path: "data/TinyStoriesV2-GPT4-valid.bin"
+val_data_path: "data/TinyStoriesV2-GPT4-valid.bin"
 vocab_path: "output/tokenizer_small_story"
 output_path: "output/train_small_story" 

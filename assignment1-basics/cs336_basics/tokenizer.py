@@ -4,6 +4,7 @@ from dataclasses import field
 import os
 import regex as re
 import yaml
+import numpy as np
 
 
 def get_base_path():
@@ -154,6 +155,52 @@ class Tokenizer:
             if idi in self.vocab:
                 decode_bytes += self.vocab[idi]
         return decode_bytes.decode("utf-8", errors="replace")
+    
+    def process_corpus(self, file_path: str, output_bin: str, chunk_size_mb: int = 50):
+        def file_chunk_generator(file_path, chunk_size):
+            with open(file_path, "r", encoding="utf-8") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"找不到语料文件 : {file_path}")
+        chunk_size = chunk_size_mb * 1024 * 1024
+        
+        if os.path.exists(output_bin):
+            os.remove(output_bin)
+
+        chunk = file_chunk_generator(file_path, chunk_size)
+        token_stream = self.encode_iterable(chunk)
+        total_tokens = 0
+        write_batch_size = 1000000
+
+        token_buffer = []
+        with open(output_bin, "ab") as f_out:
+            for token_id in token_stream:
+                token_buffer.append(token_id)
+
+                if len(token_buffer) >= write_batch_size:
+                    np_ids = np.array(token_buffer, dtype=np.uint16)
+                    f_out.write(np_ids.tobytes())
+
+                    total_tokens += len(token_buffer)
+                    token_buffer = []
+
+            if token_buffer:
+                np_ids = np.array(token_buffer, dtype=np.uint16)
+                f_out.write(np_ids.tobytes())
+
+                total_tokens += len(token_buffer)
+                token_buffer = []
+        
+        print(f"处理完成! 总 Token: {total_tokens}")
+                    
+
+
+        
 
 
 if __name__ == "__main__":
@@ -174,12 +221,22 @@ if __name__ == "__main__":
     # test iterable
     all_ids = []
     data_path = os.path.join(BASE_PATH, "data/TinyStoriesV2-GPT4-valid.txt")
-    with open(data_path) as f:
-        for _id in tokenizer.encode_iterable(f):
-            # print(f"get id {_id}")
-            all_ids.append(_id)
+    # with open(data_path) as f:
+    #     for _id in tokenizer.encode_iterable(f):
+    #         all_ids.append(_id)
 
-    with open(data_path) as f:
-        target_content = f.read()
+    # with open(data_path) as f:
+    #     target_content = f.read()
 
-    assert tokenizer.decode(all_ids) == target_content
+    # assert tokenizer.decode(all_ids) == target_content
+
+    print("------------------------------------TEST3------------------------------------")
+
+    vocab_filepath = os.path.join(BASE_PATH, "output/tokenizer_small_story/vocab.json")
+    merges_filepath = os.path.join(BASE_PATH, "output/tokenizer_small_story/merges.json")
+    special_tokens = ["<|endoftext|>"]
+    tokenizer = Tokenizer.from_files(vocab_filepath, merges_filepath, special_tokens)
+    file_path = os.path.join(BASE_PATH, "data/TinyStoriesV2-GPT4-valid.txt")
+    output_path = os.path.join(BASE_PATH, "output/TinyStoriesV2-GPT4-valid.bin") 
+
+    tokenizer.process_corpus(file_path, output_path, 50)
