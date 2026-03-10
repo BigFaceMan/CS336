@@ -9,7 +9,6 @@ import swanlab
 import numpy as np
 from tqdm import tqdm
 from cs336_basics.module import TransformerLM
-from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.utils import get_batch, cross_entropy, save_checkpoint, load_checkpoint
 from cs336_basics.optimizer import AdamW, CosineAnnealingSchedue, grad_clip
 
@@ -40,18 +39,57 @@ class TrainConfig:
     config: Optional[str] = field(default=None, repr=False)
     exp_name: Optional[str] = None
 
+
+def validate_config(config: TrainConfig) -> None:
+    required_paths = {
+        "train_data_path": config.train_data_path,
+        "val_data_path": config.val_data_path,
+        "output_path": config.output_path,
+    }
+    missing = [name for name, path in required_paths.items() if not path]
+    if missing:
+        raise ValueError(f"Missing required config fields: {', '.join(missing)}")
+
+    if config.save_interval <= 0:
+        raise ValueError("save_interval must be > 0")
+    if config.batch_size <= 0:
+        raise ValueError("batch_size must be > 0")
+    if config.max_seq_len <= 0:
+        raise ValueError("max_seq_len must be > 0")
+    if config.end_iters < 0:
+        raise ValueError("end_iters must be >= 0")
+    if config.begin_iters < 0:
+        raise ValueError("begin_iters must be >= 0")
+    if config.begin_iters > config.end_iters:
+        raise ValueError("begin_iters cannot be greater than end_iters")
+    if config.warmup_iter < 0:
+        raise ValueError("warmup_iter must be >= 0")
+
+
 def train(config: TrainConfig):
+    validate_config(config)
+    os.makedirs(config.output_path, exist_ok=True)
+
     # load dataset
-    train_data = np.memmap(config.train_data_path, dtype=np.uint16, mode='r')
-    valid_data = np.memmap(config.val_data_path, dtype=np.uint16, mode='r')
+    train_data = np.memmap(config.train_data_path, dtype=np.uint16, mode="r")
+    valid_data = np.memmap(config.val_data_path, dtype=np.uint16, mode="r")
+
+    if len(train_data) <= config.max_seq_len:
+        raise ValueError(
+            f"train dataset length ({len(train_data)}) must be > max_seq_len ({config.max_seq_len})"
+        )
+    if len(valid_data) <= config.max_seq_len:
+        raise ValueError(
+            f"val dataset length ({len(valid_data)}) must be > max_seq_len ({config.max_seq_len})"
+        )
 
     print(f"train_dataset len {len(train_data)}")
-    print(f"valie_dataset len {len(valid_data)}")
+    print(f"valid_dataset len {len(valid_data)}")
 
     swanlab.init(
         project="cs336_lab1_story", 
         experiment_name=config.exp_name or f"train_{int(time.time())}",
-        config= asdict(config)
+        config=asdict(config),
     )
 
     print(f"Config {config}")
@@ -73,19 +111,24 @@ def train(config: TrainConfig):
 
     optimizer = AdamW(model.parameters(), config.lr, 0.01, (0.9, 0.999))
     schedule = CosineAnnealingSchedue(optimizer, config.lr, config.min_lr, config.warmup_iter, config.end_iters)
-    start_iter = 0
+    start_iter = config.begin_iters
     ckpt_path = os.path.join(config.output_path, "ckpt.pth")
     if os.path.exists(ckpt_path):
-        start_iter = load_checkpoint(ckpt_path, model, optimizer)
-        schedule.ti = start_iter
-        print(f"Resuming from iteration {start_iter}")
+        last_iter = load_checkpoint(ckpt_path, model, optimizer)
+        start_iter = max(start_iter, last_iter + 1)
+        print(f"Resuming from checkpoint iteration {last_iter}, start from {start_iter}")
 
+    schedule.ti = start_iter
 
     process_bar = tqdm(range(start_iter, config.end_iters), desc="llm train")
+    last_completed_iter = start_iter - 1
 
     # train loop
     for iter in process_bar:
+        # Set per-iteration LR before the optimizer update.
+        schedule.step()
         model.train()
+        optimizer.zero_grad(set_to_none=True)
         inputs, targets = get_batch(train_data, config.batch_size, config.max_seq_len, config.device)
 
         outputs = model(inputs)
@@ -95,11 +138,9 @@ def train(config: TrainConfig):
         loss.backward()
 
         grad_clip(model.parameters(), config.max_norm)
-        
 
         optimizer.step()
-        optimizer.zero_grad()
-        schedule.step()
+        last_completed_iter = iter
 
         if iter % 100 == 0 or iter == config.end_iters - 1:
             model.eval()
@@ -107,20 +148,20 @@ def train(config: TrainConfig):
                 vx, vy = get_batch(valid_data, config.batch_size, config.max_seq_len, config.device)
                 v_logits = model(vx)
                 v_loss = cross_entropy(v_logits, vy)
-                swanlab.log({"loss" : loss.item()}, iter)
                 print(f"Iter {iter}: train_loss {loss.item():.4f}, val_loss {v_loss.item():.4f}")
                 swanlab.log({
-                    "train/loss": loss.item(), 
-                    "val/loss": v_loss.item(), 
-                    "iter": iter + 1
-                })
+                    "train/loss": loss.item(),
+                    "val/loss": v_loss.item(),
+                    "iter": iter + 1,
+                    "train/lr": optimizer.param_groups[0]["lr"],
+                }, iter + 1)
 
-                process_bar.set_postfix({"loss" : loss.item()})
+                process_bar.set_postfix({"loss": loss.item()})
 
-        if iter % config.save_interval == 0:
+        if (iter + 1) % config.save_interval == 0:
             save_checkpoint(model, optimizer, iter, os.path.join(config.output_path, "ckpt.pth"))
 
-    save_checkpoint(model, optimizer, iter, os.path.join(config.output_path, "ckpt.pth"))
+    save_checkpoint(model, optimizer, last_completed_iter, os.path.join(config.output_path, "ckpt.pth"))
     process_bar.close()
 
 
