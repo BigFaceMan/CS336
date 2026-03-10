@@ -2,7 +2,7 @@ import argparse
 import os
 import yaml
 import time
-from cs336_basics.bpe_optimized import BPETrainer
+from cs336_basics.bpe import BPETrainer
 
 
 def main(input_path, vocab_size, num_workers, special_tokens, output_dir):
