@@ -10,6 +10,7 @@ OUTPUT_ROOT="output/lr_sweep"
 LRS_CSV="1e-4,3e-4,6e-4,1e-3"
 DEVICES_CSV="cuda:0"
 DRY_RUN=0
+MAX_PARALLEL=""
 
 usage() {
   cat <<'EOF'
@@ -25,6 +26,7 @@ Options:
                           If only one device is given, it is reused for all lrs.
                           Otherwise, device count must equal lr count.
   --dry-run               Print commands only, do not execute.
+  --max-parallel <n>      Max concurrent runs. Default: device count (or 1 if single device).
   -h, --help              Show this help.
 
 Examples:
@@ -67,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=1
       shift
       ;;
+    --max-parallel)
+      MAX_PARALLEL="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -93,11 +99,23 @@ if [[ ${#DEVICES[@]} -ne 1 && ${#DEVICES[@]} -ne ${#LRS[@]} ]]; then
   exit 1
 fi
 
+if [[ -z "$MAX_PARALLEL" ]]; then
+  MAX_PARALLEL="${#DEVICES[@]}"
+fi
+
+if ! [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--max-parallel must be a positive integer."
+  exit 1
+fi
+
 sanitize() {
   echo "$1" | tr ':/.' '___'
 }
 
 mkdir -p "$OUTPUT_ROOT/$IMPL_NAME"
+
+active_jobs=0
+FAIL=0
 
 for i in "${!LRS[@]}"; do
   lr="${LRS[$i]}"
@@ -126,11 +144,26 @@ for i in "${!LRS[@]}"; do
     printf '  %q ' "${cmd[@]}"
     printf '\n'
   else
-    "${cmd[@]}"
+    "${cmd[@]}" &
+    active_jobs=$((active_jobs + 1))
+
+    if [[ "$active_jobs" -ge "$MAX_PARALLEL" ]]; then
+      wait -n || FAIL=1
+      active_jobs=$((active_jobs - 1))
+    fi
   fi
 done
 
-echo "Sweep finished."
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  wait || FAIL=1
+fi
+
+if [[ "$FAIL" -ne 0 ]]; then
+  echo "Sweep finished with failures."
+  exit 1
+fi
+
+echo "Sweep finished successfully."
 
 
 # bash script/lr_sweep.sh --impl-name my_impl --lrs 1e-4,3e-4 --devices cuda:0,cuda:1 --dry-run
