@@ -38,6 +38,7 @@ class TrainConfig:
     vocab_size: int = 10000
     warmup_iter: int = 1000
     config: Optional[str] = field(default=None, repr=False)
+    exp_name: Optional[str] = None
 
 def train(config: TrainConfig):
     # load dataset
@@ -48,7 +49,8 @@ def train(config: TrainConfig):
     print(f"valie_dataset len {len(valid_data)}")
 
     swanlab.init(
-        project="cs336_lab1_small_story", 
+        project="cs336_lab1_story", 
+        experiment_name=config.exp_name or f"train_{int(time.time())}",
         config= asdict(config)
     )
 
@@ -126,6 +128,7 @@ def train(config: TrainConfig):
 
 if __name__ == "__main__":
     parse = argparse.ArgumentParser()
+    # path
     parse.add_argument("--config", type=str, default=None, help="Path to yaml config file")
     parse.add_argument("--begin_iters", type=int, default=0)
     parse.add_argument("--end_iters", type=int, default=10000)
@@ -134,22 +137,25 @@ if __name__ == "__main__":
     parse.add_argument("--val_data_path", type=str)
     parse.add_argument("--output_path", type=str)
 
+    # model params
     parse.add_argument("--vocab_path", type=str)
-    parse.add_argument("--vocab_size", type=int, default=None)
-    parse.add_argument("--lr", type=float, default=None)
-    parse.add_argument("--batch_size", type=int, default=None)
+    parse.add_argument("--vocab_size", type=int, default=1000)
+    parse.add_argument("--batch_size", type=int, default=32)
+    parse.add_argument("--d_model", type=int, default=512)
+    parse.add_argument("--d_ff", type=int, default=2048)
+    parse.add_argument("--num_layers", type=int, default=6)
+    parse.add_argument("--num_heads", type=int, default=8)
+    parse.add_argument("--max_seq_len", type=int, default=256)
+
+    # hyper 
+    parse.add_argument("--lr", type=float, default=6e-4)
     parse.add_argument("--warmup_iter", type=int, default=1000)
-    parse.add_argument("--max_seq_len", type=int, default=None)
-    parse.add_argument("--num_layers", type=int, default=None)
-    parse.add_argument("--num_heads", type=int, default=None)
-    parse.add_argument("--d_model", type=int, default=None)
-    parse.add_argument("--d_ff", type=int, default=None)
     parse.add_argument("--max_norm", type=float, default=1.0)
     parse.add_argument("--min_lr", type=float, default=6e-5)
-    parse.add_argument("--theta", type=int, default=None)
-    parse.add_argument("--device", type=str, default=None)
-    parse.add_argument("--seed", type=int, default=None)
-    # parse.add_argument("--exp_name", type=str, default=None)
+    parse.add_argument("--theta", type=int, default=10000)
+    parse.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parse.add_argument("--seed", type=int, default=42)
+    parse.add_argument("--exp_name", type=str, default=None)
 
     cli_args = parse.parse_args()
 
