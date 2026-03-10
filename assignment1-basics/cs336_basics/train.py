@@ -36,8 +36,24 @@ class TrainConfig:
     theta: int = 10000
     vocab_size: int = 10000
     warmup_iter: int = 1000
+    use_rmsnorm: bool = True
+    use_post_norm: bool = False
+    use_rope: bool = True
+    use_swiglu: bool = True
+    use_silu: bool = True
     config: Optional[str] = field(default=None, repr=False)
     exp_name: Optional[str] = None
+
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    v = v.lower()
+    if v in ("true", "1", "yes", "y", "on"):
+        return True
+    if v in ("false", "0", "no", "n", "off"):
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {v}")
 
 
 def validate_config(config: TrainConfig) -> None:
@@ -97,15 +113,20 @@ def train(config: TrainConfig):
     # init model optimizer schedule
 
     model = TransformerLM(
-        config.d_model,
-        config.num_heads,
-        config.num_layers,
-        config.d_ff,
-        config.max_seq_len,
-        config.theta,
-        config.vocab_size,
-        config.device,
-        torch.float32,
+        d_model=config.d_model,
+        num_heads=config.num_heads,
+        num_layers=config.num_layers,
+        d_ff=config.d_ff,
+        max_seq_len=config.max_seq_len,
+        theta=config.theta,
+        vocab_size=config.vocab_size,
+        use_rmsnorm=config.use_rmsnorm,
+        use_post_norm=config.use_post_norm,
+        use_rope=config.use_rope,
+        use_swiglu=config.use_swiglu,
+        use_silu=config.use_silu,
+        device=config.device,
+        dtype=torch.float32,
     ).to(config.device)
 
 
@@ -196,6 +217,11 @@ if __name__ == "__main__":
     parse.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parse.add_argument("--seed", type=int, default=42)
     parse.add_argument("--exp_name", type=str, default=None)
+    parse.add_argument("--use_rmsnorm", type=str2bool, default=True)
+    parse.add_argument("--use_post_norm", type=str2bool, default=False)
+    parse.add_argument("--use_rope", type=str2bool, default=True)
+    parse.add_argument("--use_swiglu", type=str2bool, default=True)
+    parse.add_argument("--use_silu", type=str2bool, default=True)
 
     cli_args = parse.parse_args()
 

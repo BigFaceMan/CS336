@@ -10,14 +10,15 @@ d_ff: 2048
 device: "cuda"
 seed: 42
 theta: 10000
-use_rmsnorm: true
-use_post_norm: false
-use_rope: true
-use_swiglu: true
-use_silu: true
 vocab_size: 10000
 train_data_path: "data/TinyStoriesV2-GPT4-train.bin"
 val_data_path: "data/TinyStoriesV2-GPT4-valid.bin"
 vocab_path: "output/tokenizer_train_story"
-output_path: "output/train_full_story_fixbug" 
-exp_name: "train_full_story_fixbug"
+output_path: "output/exp05_post_norm"
+exp_name: "exp05_post_norm"
+
+use_rmsnorm: true
+use_post_norm: true
+use_rope: true
+use_swiglu: true
+use_silu: true

@@ -6,6 +6,11 @@ d_ff: 2048
 num_layers: 6
 num_heads: 8
 max_seq_len: 256
+use_rmsnorm: true
+use_post_norm: false
+use_rope: true
+use_swiglu: true
+use_silu: true
 window_size: 1000
 device: "cuda"
 seed: 42

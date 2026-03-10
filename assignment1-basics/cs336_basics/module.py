@@ -2,7 +2,6 @@ import torch
 import math
 import torch.nn as nn
 from torch import Tensor
-from torch.nn.parameter import Parameter, UninitializedParameter
 from torch.nn import functional as F, init
 from tools.test_frame import log_test
 
@@ -90,6 +89,11 @@ class RMSNorm(nn.Module):
         return x / self._rms(x).unsqueeze(-1) * self.weight
 
 
+class IdentityNorm(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x
+
+
 class SwiGLU(nn.Module):
     def __init__(self, d_model: int, d_ff: int, device=None, dtype=None):
         super().__init__()
@@ -110,6 +114,23 @@ class SwiGLU(nn.Module):
         w3_out = self.w3(x)
         element_mul = silu_out * w3_out
         return self.w2(element_mul)
+
+
+class PositionwiseFeedForward(nn.Module):
+    def __init__(self, d_model: int, d_ff: int, use_silu: bool = True, device=None, dtype=None):
+        super().__init__()
+        self.use_silu = use_silu
+        self.factory_kwargs = {"device": device, "dtype": dtype}
+        self.w1 = Linear(d_model, d_ff, **self.factory_kwargs)
+        self.w2 = Linear(d_ff, d_model, **self.factory_kwargs)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        hidden = self.w1(x)
+        if self.use_silu:
+            hidden = silu(hidden)
+        else:
+            hidden = F.relu(hidden)
+        return self.w2(hidden)
 
 
 class RoPE(nn.Module):
@@ -194,7 +215,20 @@ class MultiHeadSelfAttention(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len, rope=None, device=None, dtype=None):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        max_seq_len,
+        rope=None,
+        use_rmsnorm: bool = True,
+        use_post_norm: bool = False,
+        use_swiglu: bool = True,
+        use_silu: bool = True,
+        device=None,
+        dtype=None,
+    ):
         """
         x -> rmsnorm -> mha -> rmsnorm -> swiglu
         """
@@ -205,19 +239,30 @@ class TransformerBlock(nn.Module):
         self.d_ff = d_ff
         self.max_seq_len = max_seq_len
         self.rope = rope
+        self.use_post_norm = use_post_norm
         self.attn = MultiHeadSelfAttention(d_model, num_heads, rope=self.rope, **self.factory_kwargs)
-        self.ffn = SwiGLU(d_model, d_ff, **self.factory_kwargs)
-        self.ln1 = RMSNorm(d_model, **self.factory_kwargs)
-        self.ln2 = RMSNorm(d_model, **self.factory_kwargs)
+        if use_swiglu:
+            self.ffn = SwiGLU(d_model, d_ff, **self.factory_kwargs)
+        else:
+            self.ffn = PositionwiseFeedForward(d_model, d_ff, use_silu=use_silu, **self.factory_kwargs)
+
+        norm_cls = RMSNorm if use_rmsnorm else IdentityNorm
+        self.ln1 = norm_cls(d_model, **self.factory_kwargs) if use_rmsnorm else norm_cls()
+        self.ln2 = norm_cls(d_model, **self.factory_kwargs) if use_rmsnorm else norm_cls()
 
     def forward(self, x: Tensor, token_positions: Tensor = None):
         if token_positions is None:
             token_positions = torch.arange(x.shape[1], device=x.device, dtype=torch.long)
+        if self.use_post_norm:
+            x = self.ln1(x + self.attn(x, token_positions))
+            x = self.ln2(x + self.ffn(x))
+            return x
+
         x_norm = self.ln1(x)
-        mha_out = self.attn(x_norm, token_positions) + x
-        mha_out_norm = self.ln2(mha_out)
-        ffn_out = self.ffn(mha_out_norm) + mha_out
-        return ffn_out
+        x = self.attn(x_norm, token_positions) + x
+        x_norm = self.ln2(x)
+        x = self.ffn(x_norm) + x
+        return x
 
 
 class TransformerLM(nn.Module):
@@ -230,6 +275,11 @@ class TransformerLM(nn.Module):
         max_seq_len,
         theta,
         vocab_size,
+        use_rmsnorm: bool = True,
+        use_post_norm: bool = False,
+        use_rope: bool = True,
+        use_swiglu: bool = True,
+        use_silu: bool = True,
         device=None,
         dtype=None,
     ):
@@ -241,15 +291,34 @@ class TransformerLM(nn.Module):
         self.max_seq_len = max_seq_len
         self.theta = theta
         self.vocab_size = vocab_size
-        self.rope = RoPE(theta, d_model // num_heads, max_seq_len, device)
+        self.use_rmsnorm = use_rmsnorm
+        self.use_post_norm = use_post_norm
+        self.use_rope = use_rope
+        self.use_swiglu = use_swiglu
+        self.use_silu = use_silu
+        self.rope = RoPE(theta, d_model // num_heads, max_seq_len, device) if use_rope else None
         self.token_embeddings = Embedding(vocab_size, d_model)
         self.layers = nn.ModuleList(
             [
-                TransformerBlock(d_model, num_heads, d_ff, max_seq_len, self.rope, **self.factory_kwargs)
+                TransformerBlock(
+                    d_model,
+                    num_heads,
+                    d_ff,
+                    max_seq_len,
+                    self.rope,
+                    use_rmsnorm=use_rmsnorm,
+                    use_post_norm=use_post_norm,
+                    use_swiglu=use_swiglu,
+                    use_silu=use_silu,
+                    **self.factory_kwargs,
+                )
                 for i in range(num_layers)
             ]
         )
-        self.ln_final = RMSNorm(d_model, **self.factory_kwargs)
+        if use_rmsnorm:
+            self.ln_final = RMSNorm(d_model, **self.factory_kwargs)
+        else:
+            self.ln_final = IdentityNorm()
         self.lm_head = Linear(d_model, vocab_size, **self.factory_kwargs)
 
     def forward(self, x: torch.Tensor):
