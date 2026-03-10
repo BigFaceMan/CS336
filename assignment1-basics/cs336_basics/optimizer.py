@@ -121,20 +121,19 @@ class CosineAnnealingSchedue:
         return self.min_learning_rate
 
 def grad_clip(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps: float = 1e-6) -> None:
-    gdl2 = torch.tensor(0.0)
-    for param in parameters:
-        if param.grad is None:
-            continue
-        gdl2 += (param.grad.detach()**2).sum()
+    params = [param for param in parameters if param.grad is not None]
+    if not params:
+        return
+    gdl2 = torch.zeros((), device=params[0].grad.device)
+    for param in params:
+        gdl2 += param.grad.detach().pow(2).sum()
 
     gdl2 = torch.sqrt(gdl2)
     
     if gdl2 > max_l2_norm:
-        inv = max_l2_norm / (gdl2 + eps)
-        for param in parameters:
-            if param.grad is None:
-                continue
-            param.grad.detach().mul_(inv)
+        scale = max_l2_norm / (gdl2 + eps)
+        for param in params:
+            param.grad.detach().mul_(scale)
     
         
 
@@ -250,5 +249,4 @@ if __name__ == "__main__":
     test_adamw_basic_update()
     test_adamw_with_weight_decay()
     test_grad_clip()
-
 

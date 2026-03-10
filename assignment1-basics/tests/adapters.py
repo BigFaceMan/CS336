@@ -13,7 +13,7 @@ import torch.nn as nn
 from cs336_basics.module import (Linear, Embedding, RMSNorm, silu, SwiGLU, RoPE, softmax, scaled_dot_product_attention, MultiHeadSelfAttention, TransformerBlock, TransformerLM)
 from cs336_basics.utils import (cross_entropy, get_batch, save_checkpoint, load_checkpoint)
 from cs336_basics.optimizer import (AdamW, CosineAnnealingSchedue, grad_clip)
-from cs336_basics.bpe_optimized import train_bpe
+from cs336_basics.bpe import train_bpe
 from cs336_basics.tokenizer import Tokenizer
 
 

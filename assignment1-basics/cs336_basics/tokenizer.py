@@ -49,7 +49,7 @@ class Tokenizer:
         self.cache = {}
 
     @classmethod
-    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] = list("<|endoftext|>")):
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
         """
         vocab_json
             type is dict
@@ -63,6 +63,8 @@ class Tokenizer:
         """
         import json
         import base64
+        if special_tokens is None:
+            special_tokens = ["<|endoftext|>"]
 
         with open(vocab_filepath, "r") as f:
             vocab_json: dict = json.load(f)

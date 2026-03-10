@@ -34,10 +34,11 @@ def cross_entropy(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 
 def get_batch(dataset: npt.NDArray, batch_size: int, context_length: int, device: str):
     n = len(dataset)
-    dataset = torch.from_numpy(dataset).to(device)
-    ix = torch.randint(0, n - context_length, (batch_size,))
-    x = torch.stack([dataset[i:i+context_length] for i in ix]).long()
-    y = torch.stack([dataset[i+1:i+1+context_length] for i in ix]).long()
+    ix = torch.randint(0, n - context_length, (batch_size,)).tolist()
+    x_np = np.stack([dataset[i : i + context_length] for i in ix], axis=0)
+    y_np = np.stack([dataset[i + 1 : i + 1 + context_length] for i in ix], axis=0)
+    x = torch.from_numpy(x_np).to(device=device, dtype=torch.long)
+    y = torch.from_numpy(y_np).to(device=device, dtype=torch.long)
     return x, y
 
 def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer, iteration: int, out_path: str | os.PathLike | BinaryIO | IO[bytes]):

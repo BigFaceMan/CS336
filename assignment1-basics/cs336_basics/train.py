@@ -74,17 +74,17 @@ def train(config: TrainConfig):
     optimizer = AdamW(model.parameters(), config.lr, 0.01, (0.9, 0.999))
     schedule = CosineAnnealingSchedue(optimizer, config.lr, config.min_lr, config.warmup_iter, config.end_iters)
     start_iter = 0
-    ckpt_path = os.path.join(config.output_path, "ckpt.th")
+    ckpt_path = os.path.join(config.output_path, "ckpt.pth")
     if os.path.exists(ckpt_path):
         start_iter = load_checkpoint(ckpt_path, model, optimizer)
-        schedule.step = start_iter
+        schedule.ti = start_iter
         print(f"Resuming from iteration {start_iter}")
 
 
     process_bar = tqdm(range(start_iter, config.end_iters), desc="llm train")
 
     # train loop
-    for iter in range(start_iter, config.end_iters):
+    for iter in process_bar:
         model.train()
         inputs, targets = get_batch(train_data, config.batch_size, config.max_seq_len, config.device)
 
@@ -94,7 +94,7 @@ def train(config: TrainConfig):
 
         loss.backward()
 
-        grad_clip(model.parameters(), 1.0)
+        grad_clip(model.parameters(), config.max_norm)
         
 
         optimizer.step()
@@ -116,7 +116,6 @@ def train(config: TrainConfig):
                 })
 
                 process_bar.set_postfix({"loss" : loss.item()})
-                process_bar.update(100)
 
         if iter % config.save_interval == 0:
             save_checkpoint(model, optimizer, iter, os.path.join(config.output_path, "ckpt.pth"))
