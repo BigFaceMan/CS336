@@ -1,7 +1,7 @@
 import argparse
 import os
-import yaml
 import time
+import yaml
 from cs336_basics.bpe import BPETrainer
 
 

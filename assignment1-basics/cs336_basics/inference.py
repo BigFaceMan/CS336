@@ -14,6 +14,7 @@ class InferConfig:
     num_layers: int = 6
     num_heads: int = 8
     d_model: int = 512
+    window_size: int = 1000
     d_ff: int = 2048
     device: str = "cuda"
     seed: int = 42
@@ -42,7 +43,9 @@ def infer(config: InferConfig):
 
 
     checkpoint_path = config.model_path
-    # model.load_state_dict(torch.load(checkpoint_path, map_location=config.device))
+    checkpoint = torch.load(config.model_path,  map_location=args.device)
+    state_dict = checkpoint["model"]
+    model.load_state_dict(state_dict)
     model.eval()
 
     special_tokens = tokenizer.special_tokens
@@ -57,7 +60,7 @@ def infer(config: InferConfig):
         input_ids = torch.tensor(input_ids, dtype=torch.long).unsqueeze(0).to(config.device)
 
         with torch.no_grad():
-            output_ids = model.generate(input_ids, max_length=config.max_seq_len, eos_tokens_id=special_tokens_ids, temperature=0.9, top_p=0.8)
+            output_ids = model.generate(input_ids, max_length=config.window_size, eos_tokens_id=special_tokens_ids, temperature=0.9, top_p=0.8)
 
         output_text = tokenizer.decode(output_ids.squeeze().tolist())
         print(f"Generated text: {output_text}")
@@ -77,6 +80,7 @@ if __name__ == "__main__":
     parse.add_argument("--num_layers", type=int, default=6)
     parse.add_argument("--num_heads", type=int, default=8)
     parse.add_argument("--theta", type=int, default=10000)
+    parse.add_argument("--window_size", type=int, default=1000)
     parse.add_argument("--max_seq_len", type=int, default=256)
 
     # hyper 

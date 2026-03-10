@@ -7,7 +7,7 @@ num_layers: 6
 num_heads: 8
 d_model: 512
 d_ff: 2048
-device: "cpu"
+device: "cuda:1"
 seed: 42
 theta: 10000
 vocab_size: 500

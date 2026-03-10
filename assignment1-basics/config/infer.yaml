@@ -1,10 +1,11 @@
-model_path: "output/model.pt"
-vocab_path: "output/tokenizer_small_story"
-vocab_size: 500
+model_path: "output/train_full_story_fixbug/ckpt.pth"
+vocab_path: "output/tokenizer_full_story"
+vocab_size: 10000
 d_model: 512
 d_ff: 2048
 num_layers: 6
 num_heads: 8
 max_seq_len: 256
-device: "cpu"
+window_size: 1000
+device: "cuda"
 seed: 42
