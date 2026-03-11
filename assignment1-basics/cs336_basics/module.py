@@ -312,7 +312,7 @@ class TransformerLM(nn.Module):
                     use_silu=use_silu,
                     **self.factory_kwargs,
                 )
-                for i in range(num_layers)
+                for _ in range(num_layers)
             ]
         )
         if use_rmsnorm:

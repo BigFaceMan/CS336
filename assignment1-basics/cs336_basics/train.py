@@ -43,6 +43,8 @@ class TrainConfig:
     use_silu: bool = True
     config: Optional[str] = field(default=None, repr=False)
     exp_name: Optional[str] = None
+    project_name: Optional[str] = None
+
 
 
 def str2bool(v):
@@ -217,6 +219,7 @@ if __name__ == "__main__":
     parse.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parse.add_argument("--seed", type=int, default=42)
     parse.add_argument("--exp_name", type=str, default=None)
+    parse.add_argument("--project_name", type=str, default="cs336_lab1_story")
     parse.add_argument("--use_rmsnorm", type=str2bool, default=True)
     parse.add_argument("--use_post_norm", type=str2bool, default=False)
     parse.add_argument("--use_rope", type=str2bool, default=True)
